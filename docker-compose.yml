@@ -1,0 +1,20 @@
+services:
+  # RSSHub provides RSS feeds for X and Instagram (experimental).
+  # These routes scrape unofficial APIs and require YOUR OWN account cookies
+  # configured via .env — they may break at any time.
+  rsshub:
+    image: diygod/rsshub:latest
+    restart: unless-stopped
+    ports:
+      - "1200:1200"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1200/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
