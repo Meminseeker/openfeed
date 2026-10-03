@@ -287,7 +287,12 @@ export async function syncChannel(
           `https://www.youtube.com/channel/${channelId}/${kind === "short" ? "shorts" : kind === "video" ? "videos" : "posts"}`,
         ),
       );
-      for (const p of publicPosts(data, creatorId, kind, channelId)) {
+      for (const p of publicPosts(
+        data,
+        creatorId,
+        kind as "video" | "short" | "community",
+        channelId,
+      )) {
         const rss = uploads.get(p.id);
         posts.set(p.id, {
           ...p,

@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. The server listens on loopback only. No API key, account, or YouTube sign-in is required.
+Open http://localhost:3000. The server listens on loopback only. No API key or platform sign-in is required for public-page mode.
 
 ```sh
 npm test
@@ -23,9 +23,9 @@ npm start
 
 ## What works
 
-- Follow a public YouTube channel by @handle, channel ID, or channel URL.
-- Rename creator profiles, assign multiple comma-separated topics, and store their Instagram, X, TikTok, and Patreon accounts alongside YouTube. Those platforms are metadata only in this phase.
-- Mix videos, Shorts, and creator-authored community posts in one feed, including multi-image albums.
+- Follow a public YouTube channel or X account by @handle or profile URL (YouTube channel IDs also work).
+- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube and X accounts. Instagram, TikTok, and Patreon remain metadata only.
+- Mix videos, Shorts, and creator-authored community posts in one feed, including multi-image albums, alongside X text, photo, video and GIF posts.
 - Set content types to sync independently on each creator/source. Empty selection pauses that source. Existing posts and notes remain available. Other-platform preferences are stored until those integrations are implemented.
 - Open posts in a modal with video playback, image carousel, previous/next navigation, and separate copy/open-source actions.
 - Write autosaved notes on any item, insert video timestamps, and jump back to timestamped notes. Notes are stored in SQLite, with a browser draft backup for pending/failed saves.
@@ -42,6 +42,16 @@ Public-page parsing is best effort and can break when YouTube changes its markup
 This is **recent-content tracking, not a complete historical archive**: the first public page is fetched without continuation pagination. Shorts outside RSS often have no publish date; these appear after dated posts with “Date unavailable.” Videos outside RSS and community dates are approximate, derived from YouTube's relative timestamps. Different content types may therefore have imperfect chronological ordering. Short classification outside the first Shorts page may be incomplete. Community image albums and attached videos are supported. Poll voting and external attachments still require opening the source.
 
 Video playback uses YouTube's privacy-enhanced embed, loaded only when a video is opened in the viewer. Playback starts on user interaction. YouTube can display its own ads, controls, recommendations, and embedding restrictions; OpenFeed does not bypass these. An open-source action is always available if embedding fails. Thumbnail and avatar requests still contact YouTube's image servers. Fonts are bundled locally; OpenFeed has no analytics or recommendation engine.
+
+## X ingestion and limits
+
+Add an X username/profile URL in a creator's details, or select X when adding a creator. Enable **Posts**, then refresh. All authored X content is classified as **X posts** in the content-type filter, including photos and videos. Unchecking Posts pauses that source. Existing notes, read state and saved posts survive refresh. Removing an account stops new imports; existing items remain until the creator is unfollowed.
+
+Without a key, the adapter fetches X's own public syndication timeline server-side. **This is a limited snapshot, not a reliable recent timeline**: X may return popular/older posts and omit recent ones. The live Dolubatarya check returned 100 posts whose newest date was November 2025. The UI reports this coverage warning. No cookies, guest-token workaround or platform login is used. The endpoint is undocumented and can change, be unavailable, or throttle requests. Failed sources report errors independently so YouTube can continue syncing.
+
+For recent posts, optionally set `X_BEARER_TOKEN` in the server environment to an app-only bearer token from your X developer account, then restart the server. This selects the official X API for every X source. API access and usage may incur charges under your X plan; OpenFeed does not obtain a token or subscribe for you. The token stays server-side, never in the browser or database. The adapter checks the profile's protected flag and imports up to 30 posts and reposts per refresh, excluding replies at the API. After the first successful API refresh, a persisted `since_id` cursor requests only newer items. If more than 30 arrive, older excess items are deliberately skipped and a coverage warning appears; there is no paid pagination/backfill. It does not paginate/backfill a complete archive or bypass access restrictions. Authentication/rate-limit failures are surfaced without silently switching to stale snapshots. See [X user posts documentation](https://docs.x.com/x-api/users/get-posts).
+
+Both modes accept posts and reposts from the approved account and exclude replies. Reposted text is shown as returned by X and labeled Repost; original-post media/details are not separately fetched, avoiding extra API reads. Embedded quoted-account media are excluded. Protected accounts are rejected. Photos and the highest available MP4 variant play directly from X's image/video servers in the viewer, with no X timeline widget or recommendations. Multiple videos have a selector; GIFs loop on user playback. Keyboard seeking, play/pause, notes and timestamps work with native video. Caption tracks generally aren't exposed by X; C reports this when unavailable. Poll voting, cards, quoted-post details and interactions require Open source. Public-page long posts can be truncated by X.
 
 ## Viewer shortcuts and notes
 
@@ -66,6 +76,7 @@ The app is designed for **one person on their own machine**. It has no login or 
 - `src/types.ts`: platform-neutral creator and post models
 - `server/index.ts`: local HTTP API and SQLite persistence
 - `server/youtube.ts`: public YouTube adapter
+- `server/x.ts`: public snapshot and optional official API X adapters
 - `tests/youtube.test.ts`: channel validation, page parsing, source isolation
 
 The sample channels @dolubatarya and @yatirim101 were used for live validation. Local test data is not committed.

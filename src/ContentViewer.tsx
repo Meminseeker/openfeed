@@ -39,6 +39,7 @@ export function ContentViewer({
 }) {
   const dialog = useRef<HTMLElement>(null),
     host = useRef<HTMLDivElement>(null),
+    native = useRef<HTMLVideoElement>(null),
     player = useRef<YouTubePlayer | undefined>(undefined),
     touch = useRef<{ x: number; y: number } | undefined>(undefined);
   const [imageIndex, setImageIndex] = useState(0),
@@ -51,13 +52,17 @@ export function ContentViewer({
     [failedImage, setFailedImage] = useState(false),
     [position, setPosition] = useState(0),
     [duration, setDuration] = useState(0);
-  const images = post.images?.length
-    ? post.images
-    : post.image
-      ? [post.image]
-      : [];
-  const videoId = post.kind === "community" ? post.videoId : post.id;
-  const isVideo = !!videoId;
+  const images =
+    post.images !== undefined ? post.images : post.image ? [post.image] : [];
+  const [videoIndex, setVideoIndex] = useState(0);
+  const videoId =
+    post.platform === "x" || post.kind === "post"
+      ? undefined
+      : post.kind === "community"
+        ? post.videoId
+        : post.id;
+  const nativeVideo = post.videos?.[videoIndex];
+  const isVideo = !!videoId || !!nativeVideo;
   useEffect(() => {
     const focus = document.activeElement as HTMLElement | null,
       overflow = document.body.style.overflow;
@@ -70,6 +75,7 @@ export function ContentViewer({
   }, []);
   useEffect(() => {
     setImageIndex(0);
+    setVideoIndex(0);
     setPosition(0);
     setDuration(0);
     setFailedImage(false);
@@ -135,7 +141,10 @@ export function ContentViewer({
   useEffect(() => {
     if (!ready) return;
     const tick = () => {
-      if (player.current) {
+      if (native.current) {
+        setPosition(native.current.currentTime || 0);
+        setDuration(native.current.duration || 0);
+      } else if (player.current) {
         setPosition(player.current.getCurrentTime() || 0);
         setDuration(player.current.getDuration() || 0);
       }
@@ -146,13 +155,27 @@ export function ContentViewer({
   }, [ready]);
   const seek = useCallback(
     (seconds: number) => {
-      if (player.current && ready)
+      if (native.current && ready)
+        native.current.currentTime = seekPosition(
+          0,
+          seconds,
+          native.current.duration,
+        );
+      else if (player.current && ready)
         player.current.seekTo(Math.max(0, seconds), true);
     },
     [ready],
   );
   const skip = useCallback(
     (delta: number) => {
+      if (native.current && ready) {
+        native.current.currentTime = seekPosition(
+          native.current.currentTime,
+          delta,
+          native.current.duration,
+        );
+        return;
+      }
       const p = player.current;
       if (p && ready)
         p.seekTo(
@@ -163,6 +186,14 @@ export function ContentViewer({
     [ready],
   );
   const togglePlay = useCallback(() => {
+    if (native.current && ready) {
+      if (native.current.paused)
+        void native.current
+          .play()
+          .catch(() => setHint("Use the video play button to start playback."));
+      else native.current.pause();
+      return;
+    }
     const p = player.current;
     if (p && ready) {
       if (p.getPlayerState() === 1) p.pauseVideo();
@@ -170,6 +201,16 @@ export function ContentViewer({
     }
   }, [ready]);
   const toggleCaptions = useCallback(() => {
+    if (native.current) {
+      const tracks = Array.from(native.current.textTracks);
+      if (!tracks.length) {
+        setHint("This X video has no caption track available.");
+        return;
+      }
+      tracks.forEach((t) => (t.mode = captions ? "disabled" : "showing"));
+      setCaptions(!captions);
+      return;
+    }
     const p = player.current;
     if (!p || !ready) return;
     // Caption module loading is exposed by some embedded players, but isn't a
@@ -262,12 +303,16 @@ export function ContentViewer({
             <div>
               <strong>{creator.name}</strong>
               <small>
-                YouTube ·{" "}
-                {post.kind === "community"
-                  ? "Community post"
-                  : post.kind === "short"
-                    ? "Short"
-                    : "Video"}
+                {post.platform === "x" ? "X" : "YouTube"} ·{" "}
+                {post.kind === "post"
+                  ? post.repost
+                    ? "Repost"
+                    : "Post"
+                  : post.kind === "community"
+                    ? "Community post"
+                    : post.kind === "short"
+                      ? "Short"
+                      : "Video"}
               </small>
             </div>
           </div>
@@ -295,17 +340,65 @@ export function ContentViewer({
                 <div
                   className={`video-stage ${post.kind === "short" ? "short-stage" : ""}`}
                 >
-                  <div ref={host} className="youtube-host" />
+                  {nativeVideo ? (
+                    <video
+                      key={nativeVideo.url}
+                      ref={native}
+                      src={nativeVideo.url}
+                      poster={nativeVideo.poster}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      loop={nativeVideo.loop}
+                      muted={nativeVideo.loop}
+                      onLoadedMetadata={() => {
+                        setReady(true);
+                        setError("");
+                      }}
+                      onPlay={() => setPlaying(true)}
+                      onPause={() => setPlaying(false)}
+                      onEnded={() => setPlaying(false)}
+                      onError={() =>
+                        setError(
+                          "This X video couldn't load. Try again or open the source.",
+                        )
+                      }
+                    />
+                  ) : (
+                    <div ref={host} className="youtube-host" />
+                  )}
+                  {(post.videos?.length || 0) > 1 && (
+                    <select
+                      aria-label="Select video"
+                      value={videoIndex}
+                      onChange={(e) => {
+                        setVideoIndex(Number(e.target.value));
+                        setReady(false);
+                        setPlaying(false);
+                        setError("");
+                      }}
+                    >
+                      {post.videos!.map((v, i) => (
+                        <option key={v.url} value={i}>
+                          Video {i + 1}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   {!ready && !error && (
-                    <span className="player-loading">
-                      Loading YouTube player…
-                    </span>
+                    <span className="player-loading">Loading video…</span>
                   )}
                 </div>
                 {error ? (
                   <div className="player-error" role="alert">
                     {error}
-                    <button onClick={() => setRetry((n) => n + 1)}>
+                    <button
+                      onClick={() => {
+                        native.current?.load();
+                        setError("");
+                        setRetry((n) => n + 1);
+                      }}
+                    >
                       Retry player
                     </button>
                   </div>
@@ -354,7 +447,8 @@ export function ContentViewer({
                   </p>
                 )}
               </>
-            ) : images.length > 0 ? (
+            ) : null}
+            {images.length > 0 && (!isVideo || post.platform === "x") ? (
               <div className="image-viewer">
                 <div
                   className="image-stage"
@@ -452,7 +546,10 @@ export function ContentViewer({
             onSaved={onNotesSaved}
             currentTime={
               isVideo && ready
-                ? () => player.current?.getCurrentTime() || 0
+                ? () =>
+                    native.current?.currentTime ||
+                    player.current?.getCurrentTime() ||
+                    0
                 : undefined
             }
             seek={isVideo && ready ? seek : undefined}
@@ -504,7 +601,7 @@ export function ContentViewer({
             </span>
           </div>
         </footer>
-        {isVideo && (
+        {!!videoId && (
           <div className="iframe-help">
             Click the title to use feed shortcuts. Inside the player, YouTube
             handles its own keys. Shortcuts pause while you type notes.

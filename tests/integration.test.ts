@@ -120,6 +120,11 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
       synced.posts.find((p: any) => p.id === "test-post").notes,
       "[1:01] A useful idea",
     );
+    assert.equal(
+      synced.posts.find((p: any) => p.id === "x:123").creatorId,
+      "test-creator",
+    );
+    await call("posts/x:123", "PATCH", { saved: true, notes: "X note" });
     await call("creators/test-creator", "PATCH", {
       accounts: [
         { platform: "youtube", syncTypes: ["community"] },
@@ -132,6 +137,25 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
       synced.posts.find((p: any) => p.id === "test-community").images,
       ["https://example.com/one.jpg", "https://example.com/two.jpg"],
     );
+    assert.equal(
+      synced.posts.find((p: any) => p.id === "x:123").notes,
+      "X note",
+    );
+    const xCreator = await call("creators", "POST", {
+      platform: "x",
+      channel: "https://x.com/Another",
+    });
+    assert.equal(xCreator.accounts[0].username, "Another");
+    await call(`creators/${xCreator.id}`, "PATCH", {
+      accounts: [{ platform: "x", username: "Another", syncTypes: [] }],
+    });
+    await call("sync", "POST");
+    assert.ok(
+      !(await call("state")).posts.some(
+        (p: any) => p.creatorId === xCreator.id,
+      ),
+    );
+    await call(`creators/${xCreator.id}`, "DELETE");
     const bad = await fetch(`${base}/api/creators/test-creator`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

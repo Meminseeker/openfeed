@@ -1,4 +1,4 @@
-export type Kind = "video" | "short" | "community";
+export type Kind = "video" | "short" | "community" | "post";
 export type SyncType = Kind | "post";
 export const sourceTypes: Record<string, SyncType[]> = {
   youtube: ["video", "short", "community"],
@@ -21,6 +21,9 @@ export interface Account {
   username: string;
   channelId?: string;
   syncTypes?: SyncType[];
+  xSinceId?: string;
+  lastSync?: string;
+  error?: string;
 }
 export interface Creator {
   id: string;
@@ -39,6 +42,10 @@ export interface Post {
   image?: string;
   images?: string[];
   videoId?: string;
+  platform?: "youtube" | "x";
+  sourceUsername?: string;
+  videos?: { url: string; poster?: string; loop?: boolean }[];
+  repost?: boolean;
   notes?: string;
   url: string;
   kind: Kind;

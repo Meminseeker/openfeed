@@ -32,6 +32,7 @@ const labels: Record<Kind, string> = {
   video: "Videos",
   short: "Shorts",
   community: "Community",
+  post: "X posts",
 };
 function App() {
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
@@ -292,7 +293,7 @@ function App() {
                 <h2>
                   Your creators <span>{state.creators.length}</span>
                 </h2>
-                <span>YouTube is live · More platforms soon</span>
+                <span>YouTube & X are live · More platforms soon</span>
               </div>
               <div className="creator-grid">
                 {state.creators.map((c) => (
@@ -330,7 +331,7 @@ function App() {
               {!state.creators.length && !loading && (
                 <Empty
                   title="Start with someone you love following."
-                  text="Add a YouTube creator, give them a few topics, and make this space your own."
+                  text="Add a YouTube or X creator, give them a few topics, and make this space your own."
                   action={() => setModal(true)}
                 />
               )}
@@ -442,7 +443,7 @@ function App() {
               <div className="feed-info">
                 <span>
                   <span className="live-dot" />
-                  YouTube{" "}
+                  YouTube + X{" "}
                   <span className="muted">
                     · Chronological · {visible.length} posts
                   </span>
@@ -484,7 +485,7 @@ function App() {
                   text={
                     state.creators.length
                       ? "Refresh to fetch public posts, or adjust your filters."
-                      : "Add your first YouTube creator. No recommendations, no endless scroll—just the people you choose."
+                      : "Add your first YouTube or X creator. No recommendations, no endless scroll—just the people you choose."
                   }
                   action={
                     state.creators.length
@@ -533,8 +534,9 @@ function App() {
                 </div>
               )}
               <div className="source-note">
-                Public content only. Recent uploads and available community
-                posts. ≈ Approximate date; undated posts appear last. No ads or
+                Public content only. YouTube uploads and community posts, plus
+                available X posts. X public snapshots can omit recent posts. ≈
+                Approximate date; undated posts appear last. No ads or
                 recommendations added by OpenFeed.
               </div>
             </>
@@ -651,9 +653,17 @@ function PostCard({
               ? new Date(p.published).toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
+                  year:
+                    new Date(p.published).getFullYear() !==
+                    new Date().getFullYear()
+                      ? "numeric"
+                      : undefined,
                 })
               : "Date unavailable"}{" "}
-            <span>· YouTube</span>
+            <span>
+              ·{" "}
+              {p.platform === "x" ? (p.repost ? "X · Repost" : "X") : "YouTube"}
+            </span>
           </small>
         </div>
         <button
@@ -678,7 +688,9 @@ function PostCard({
               loading="lazy"
               referrerPolicy="no-referrer"
             />
-            {p.kind !== "community" && (
+            {(p.kind === "video" ||
+              p.kind === "short" ||
+              !!p.videos?.length) && (
               <span className="play">
                 <Play size={20} fill="currentColor" />
               </span>
@@ -692,7 +704,9 @@ function PostCard({
                 ? "SHORT"
                 : p.kind === "community"
                   ? "COMMUNITY"
-                  : "VIDEO"}
+                  : p.kind === "post"
+                    ? "X POST"
+                    : "VIDEO"}
             </span>
           </div>
         )}
@@ -768,6 +782,7 @@ function CreatorModal({
   const dialogRef = useRef<HTMLElement>(null);
   const [name, setName] = useState(creator?.name || ""),
     [channel, setChannel] = useState(""),
+    [platform, setPlatform] = useState("youtube"),
     [tags, setTags] = useState(creator?.tags.join(", ") || ""),
     [accounts, setAccounts] = useState<Account[]>(
       creator?.accounts || [
@@ -787,7 +802,7 @@ function CreatorModal({
       if (e.key === "Tab") {
         const elements = Array.from(
           dialogRef.current?.querySelectorAll<HTMLElement>(
-            "button:not(:disabled), input, summary",
+            "button:not(:disabled), input, select, summary",
           ) || [],
         ).filter((el) => el.getClientRects().length);
         const first = elements[0],
@@ -810,11 +825,17 @@ function CreatorModal({
     setError("");
     try {
       let c = creator;
-      if (!c) c = await api("creators", "POST", { channel });
+      if (!c) c = await api("creators", "POST", { channel, platform });
       await api(`creators/${c!.id}`, "PATCH", {
         name: name || c!.name,
         tags: tags.split(","),
-        accounts,
+        accounts: !creator
+          ? accounts.map((a) =>
+              a.platform === platform
+                ? { ...a, username: c!.accounts[0].username }
+                : a,
+            )
+          : accounts,
       });
       await done();
     } catch (e) {
@@ -853,11 +874,36 @@ function CreatorModal({
         <form onSubmit={submit}>
           {!creator && (
             <label>
-              YouTube channel
+              Source
+              <select
+                value={platform}
+                onChange={(e) => {
+                  setPlatform(e.target.value);
+                  setChannel("");
+                  setAccounts([
+                    {
+                      platform: e.target.value,
+                      username: "",
+                      syncTypes:
+                        e.target.value === "x"
+                          ? ["post"]
+                          : ["video", "short", "community"],
+                    },
+                  ]);
+                }}
+              >
+                <option value="youtube">YouTube</option>
+                <option value="x">X (Twitter)</option>
+              </select>
+              {platform === "x" ? "X account" : "YouTube channel"}
               <input
                 autoFocus
                 required
-                placeholder="@mkbhd or a YouTube channel URL"
+                placeholder={
+                  platform === "x"
+                    ? "@username or an X profile URL"
+                    : "@mkbhd or a YouTube channel URL"
+                }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
               />
@@ -884,36 +930,104 @@ function CreatorModal({
               Separate topics with commas. A creator can belong to several.
             </small>
           </label>
-          <div className="source-settings">
-            <div className="source-heading">
-              <strong>YouTube</strong>
-              <span>Sync enabled</span>
-            </div>
-            {creator && (
+          {creator &&
+            !creator.accounts.some((a) => a.platform === "youtube") && (
+              <label>
+                YouTube channel (optional)
+                <input
+                  value={
+                    accounts.find((a) => a.platform === "youtube")?.username ||
+                    ""
+                  }
+                  placeholder="@handle or a YouTube channel URL"
+                  onChange={(e) =>
+                    setAccounts([
+                      ...accounts.filter((a) => a.platform !== "youtube"),
+                      { platform: "youtube", username: e.target.value },
+                    ])
+                  }
+                />
+              </label>
+            )}
+          {accounts.some((a) => a.platform === "youtube") && (
+            <div className="source-settings">
+              <div className="source-heading">
+                <strong>YouTube</strong>
+                <span>Public content</span>
+              </div>
               <small>
                 {accounts.find((a) => a.platform === "youtube")?.username}
               </small>
+              <SyncChoices
+                account={accounts.find((a) => a.platform === "youtube")!}
+                change={(syncTypes) =>
+                  setAccounts(
+                    accounts.map((a) =>
+                      a.platform === "youtube" ? { ...a, syncTypes } : a,
+                    ),
+                  )
+                }
+              />
+              <small>
+                {accounts.find((a) => a.platform === "youtube")?.error ||
+                  "Choose what to fetch. Existing posts and notes are kept."}
+              </small>
+            </div>
+          )}
+          <div className="source-settings">
+            <div className="source-heading">
+              <strong>X (Twitter)</strong>
+              <span>Public content</span>
+            </div>
+            {!(!creator && platform === "x") && (
+              <label>
+                X username or profile URL
+                <input
+                  value={
+                    accounts.find((a) => a.platform === "x")?.username || ""
+                  }
+                  placeholder="@username or https://x.com/username"
+                  onChange={(e) =>
+                    setAccounts([
+                      ...accounts.filter((a) => a.platform !== "x"),
+                      {
+                        ...accounts.find((a) => a.platform === "x"),
+                        platform: "x",
+                        username: e.target.value,
+                      },
+                    ])
+                  }
+                />
+              </label>
             )}
-            <SyncChoices
-              account={accounts.find((a) => a.platform === "youtube")!}
-              change={(syncTypes) =>
-                setAccounts(
-                  accounts.map((a) =>
-                    a.platform === "youtube" ? { ...a, syncTypes } : a,
-                  ),
-                )
-              }
-            />
+            {(accounts.find((a) => a.platform === "x")?.username ||
+              platform === "x") && (
+              <SyncChoices
+                account={
+                  accounts.find((a) => a.platform === "x") || {
+                    platform: "x",
+                    username: "",
+                  }
+                }
+                change={(syncTypes) =>
+                  setAccounts(
+                    accounts.map((a) =>
+                      a.platform === "x" ? { ...a, syncTypes } : a,
+                    ),
+                  )
+                }
+              />
+            )}
             <small>
-              {creator?.error ||
-                "Choose what to fetch on the next refresh. Existing posts and notes are kept."}
+              {accounts.find((a) => a.platform === "x")?.error ||
+                "Limited public snapshot: X may return older posts and omit recent ones. No sign-in needed."}
             </small>
           </div>
           <details>
             <summary>
               Other accounts <span>Save now, sync in a future phase</span>
             </summary>
-            {["instagram", "x", "tiktok", "patreon"].map((platform) => {
+            {["instagram", "tiktok", "patreon"].map((platform) => {
               const account = accounts.find((a) => a.platform === platform) || {
                 platform,
                 username: "",

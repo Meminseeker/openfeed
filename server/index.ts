@@ -1,3 +1,4 @@
+import { syncX, xUsername } from "./x.ts";
 import express from "express";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
@@ -63,25 +64,30 @@ app.get("/api/state", (_, res) =>
 );
 app.post("/api/creators", async (req, res, next) => {
   try {
-    const channel = await resolveChannel(String(req.body.channel || ""));
+    const platform = req.body.platform === "x" ? "x" : "youtube";
+    const input = String(req.body.channel || "");
+    const channel =
+      platform === "youtube" ? await resolveChannel(input) : undefined;
+    const username = platform === "x" ? xUsername(input) : input;
     if (
-      creators().some((c) => c.accounts.some((a) => a.channelId === channel.id))
+      creators().some((c) =>
+        c.accounts.some((a) =>
+          platform === "youtube"
+            ? a.channelId === channel!.id
+            : a.platform === "x" &&
+              xUsername(a.username).toLowerCase() === username.toLowerCase(),
+        ),
+      )
     ) {
-      res.status(409).json({ error: "You already follow this channel." });
+      res.status(409).json({ error: "You already follow this account." });
       return;
     }
     const c: Creator = {
       id: randomUUID(),
-      name: channel.name,
-      avatar: channel.avatar,
+      name: channel?.name || username,
+      avatar: channel?.avatar || "",
       tags: [],
-      accounts: [
-        {
-          platform: "youtube",
-          username: String(req.body.channel),
-          channelId: channel.id,
-        },
-      ],
+      accounts: [{ platform, username, channelId: channel?.id }],
     };
     saveCreator(c);
     res.json(c);
@@ -89,7 +95,7 @@ app.post("/api/creators", async (req, res, next) => {
     next(e);
   }
 });
-app.patch("/api/creators/:id", (req, res) => {
+app.patch("/api/creators/:id", async (req, res) => {
   const c = creators().find((c) => c.id === req.params.id);
   if (!c) {
     res.sendStatus(404);
@@ -117,6 +123,57 @@ app.patch("/api/creators/:id", (req, res) => {
           ? { ...a, syncTypes: validSyncTypes("youtube", input.syncTypes) }
           : a;
       });
+    const newYoutube = req.body.accounts.find(
+      (a: any) =>
+        a.platform === "youtube" &&
+        typeof a.username === "string" &&
+        a.username.trim(),
+    );
+    if (!youtube.length && newYoutube) {
+      const resolved = await resolveChannel(newYoutube.username);
+      if (
+        creators().some(
+          (other) =>
+            other.id !== c.id &&
+            other.accounts.some((a) => a.channelId === resolved.id),
+        )
+      )
+        throw new Error(
+          "You already follow this YouTube account under another creator.",
+        );
+      youtube.push({
+        platform: "youtube",
+        username: newYoutube.username,
+        channelId: resolved.id,
+        syncTypes:
+          newYoutube.syncTypes !== undefined
+            ? validSyncTypes("youtube", newYoutube.syncTypes)
+            : undefined,
+      });
+    }
+    for (const a of req.body.accounts.filter(
+      (a: any) =>
+        a.platform === "x" &&
+        typeof a.username === "string" &&
+        a.username.trim(),
+    )) {
+      const username = xUsername(a.username);
+      if (
+        creators().some(
+          (other) =>
+            other.id !== c.id &&
+            other.accounts.some(
+              (old) =>
+                old.platform === "x" &&
+                xUsername(old.username).toLowerCase() ===
+                  username.toLowerCase(),
+            ),
+        )
+      )
+        throw new Error(
+          "You already follow this X account under another creator.",
+        );
+    }
     const other = req.body.accounts
       .filter(
         (a: any) =>
@@ -125,8 +182,19 @@ app.patch("/api/creators/:id", (req, res) => {
           a.username.trim(),
       )
       .map((a: any) => ({
+        ...c.accounts.find(
+          (old) =>
+            old.platform === a.platform &&
+            (a.platform === "x"
+              ? xUsername(old.username).toLowerCase() ===
+                xUsername(a.username).toLowerCase()
+              : old.username === a.username.trim()),
+        ),
         platform: a.platform,
-        username: a.username.trim().slice(0, 100),
+        username:
+          a.platform === "x"
+            ? xUsername(a.username)
+            : a.username.trim().slice(0, 100),
         syncTypes:
           a.syncTypes !== undefined
             ? validSyncTypes(a.platform, a.syncTypes)
@@ -151,45 +219,77 @@ app.post("/api/sync", async (_, res) => {
   syncing = true;
   try {
     for (const c of creators()) {
-      try {
-        const account = c.accounts.find((a) => a.platform === "youtube");
-        const channel = account?.channelId;
-        if (!channel || !account) continue;
-        const kinds = enabledTypes(account) as Kind[];
-        if (!kinds.length) continue;
-        const result = await syncChannel(channel, c.id, kinds);
-        if (!creators().some((x) => x.id === c.id)) continue;
-        const current = creators().find((x) => x.id === c.id)!;
-        const old = new Map(posts().map((p) => [p.id, p]));
-        for (const p of result.posts) {
-          const source = current.accounts.find((a) => a.channelId === channel);
-          if (!source || !enabledTypes(source).includes(p.kind)) continue;
-          const prev = old.get(p.id);
-          const keepDate =
-            !!prev?.published && (p.publishedApproximate || !p.published);
-          savePost({
-            ...p,
-            published: keepDate ? prev!.published : p.published,
-            publishedApproximate: keepDate
-              ? prev!.publishedApproximate
-              : p.publishedApproximate,
-            read: prev?.read || false,
-            saved: prev?.saved || false,
-            notes: prev?.notes || "",
-          });
+      for (const account of c.accounts.filter((a) =>
+        ["youtube", "x"].includes(a.platform),
+      )) {
+        if (!enabledTypes(account).length) continue;
+        const sameSource = (a: Creator["accounts"][number]) =>
+          a.platform === account.platform &&
+          (a.platform === "youtube"
+            ? a.channelId === account.channelId
+            : a.username === account.username);
+        try {
+          const result =
+            account.platform === "x"
+              ? await syncX(account.username, c.id, account.xSinceId)
+              : await syncChannel(
+                  account.channelId!,
+                  c.id,
+                  enabledTypes(account) as Kind[],
+                );
+          const current = creators().find((x) => x.id === c.id);
+          const source = current?.accounts.find(sameSource);
+          if (!current || !source || !enabledTypes(source).length) continue;
+          const old = new Map(posts().map((p) => [p.id, p]));
+          for (const p of result.posts) {
+            if (!enabledTypes(source).includes(p.kind)) continue;
+            const prev = old.get(p.id);
+            const keepDate =
+              !!prev?.published && (p.publishedApproximate || !p.published);
+            savePost({
+              ...p,
+              published: keepDate ? prev!.published : p.published,
+              publishedApproximate: keepDate
+                ? prev!.publishedApproximate
+                : p.publishedApproximate,
+              read: prev?.read || false,
+              saved: prev?.saved || false,
+              notes: prev?.notes || "",
+            });
+          }
+          if ("newestId" in result && typeof result.newestId === "string")
+            source.xSinceId = result.newestId;
+          source.lastSync = new Date().toISOString();
+          source.error = result.warning || undefined;
+          if (!current.avatar && "avatar" in result)
+            current.avatar = String(result.avatar || "");
+          current.lastSync = source.lastSync;
+          current.error =
+            current.accounts
+              .map((a) =>
+                a.error
+                  ? `${a.platform === "x" ? "X" : "YouTube"}: ${a.error}`
+                  : "",
+              )
+              .filter(Boolean)
+              .join(" · ") || undefined;
+          saveCreator(current);
+        } catch (e) {
+          const current = creators().find((x) => x.id === c.id);
+          const source = current?.accounts.find(sameSource);
+          if (current && source) {
+            source.error = e instanceof Error ? e.message : "Sync failed";
+            current.error = current.accounts
+              .map((a) =>
+                a.error
+                  ? `${a.platform === "x" ? "X" : "YouTube"}: ${a.error}`
+                  : "",
+              )
+              .filter(Boolean)
+              .join(" · ");
+            saveCreator(current);
+          }
         }
-        saveCreator({
-          ...current,
-          lastSync: new Date().toISOString(),
-          error: result.warning || undefined,
-        });
-      } catch (e) {
-        const current = creators().find((x) => x.id === c.id);
-        if (current)
-          saveCreator({
-            ...current,
-            error: e instanceof Error ? e.message : "Sync failed",
-          });
       }
     }
     res.json({ creators: creators(), posts: posts() });

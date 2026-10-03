@@ -2,6 +2,10 @@
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
+  if (url.startsWith("https://syndication.twitter.com/"))
+    return new Response(
+      `<script id="__NEXT_DATA__">${JSON.stringify({ props: { pageProps: { timeline: { entries: [{ type: "tweet", content: { tweet: { id_str: "123", user: { screen_name: url.split("/").at(-1), protected: false }, full_text: "A public X post", created_at: "Mon Sep 08 09:00:17 +0000 2025" } } }] } } } })}</script>`,
+    );
   if (!url.startsWith("https://www.youtube.com/"))
     return originalFetch(input, init);
   if (url.includes("/feeds/"))
