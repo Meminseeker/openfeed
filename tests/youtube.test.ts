@@ -154,3 +154,49 @@ test("video cards tolerate metadata rows without parts", () => {
   assert.equal(p.title, "A video");
   assert.equal(p.published, "");
 });
+test("imports every album image in order at its best resolution and attached videos", () => {
+  const image = (url: string) => ({
+    backstageImageRenderer: {
+      image: {
+        thumbnails: [
+          { url: url + "-small", width: 100 },
+          { url, width: 800 },
+        ],
+      },
+    },
+  });
+  const [p] = publicPosts(
+    {
+      backstagePostRenderer: {
+        postId: "album",
+        contentText: { simpleText: "An album" },
+        backstageAttachment: {
+          postMultiImageRenderer: {
+            images: [
+              image("https://example.com/one"),
+              image("https://example.com/two"),
+            ],
+          },
+        },
+      },
+    },
+    "creator",
+    "community",
+  );
+  assert.deepEqual(p.images, [
+    "https://example.com/one",
+    "https://example.com/two",
+  ]);
+  assert.equal(p.image, p.images![0]);
+  const [video] = publicPosts(
+    {
+      backstagePostRenderer: {
+        postId: "video-post",
+        backstageAttachment: { videoRenderer: { videoId: "attached" } },
+      },
+    },
+    "creator",
+    "community",
+  );
+  assert.equal(video.videoId, "attached");
+});

@@ -4,7 +4,16 @@ import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveChannel, syncChannel } from "./youtube.ts";
-import type { Creator, Post } from "../src/types.ts";
+import type { Creator, Post, Kind } from "../src/types.ts";
+import { enabledTypes, sourceTypes } from "../src/types.ts";
+function validSyncTypes(platform: string, value: unknown) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((v) => sourceTypes[platform]?.includes(v))
+  )
+    throw new Error("Invalid content types for this source.");
+  return [...new Set(value)];
+}
 const databasePath = process.env.OPENFEED_DB || "data/openfeed.db";
 mkdirSync(dirname(databasePath), { recursive: true });
 const db = new DatabaseSync(databasePath);
@@ -98,7 +107,16 @@ app.patch("/api/creators/:id", (req, res) => {
       ),
     ].slice(0, 20);
   if (Array.isArray(req.body.accounts)) {
-    const youtube = c.accounts.filter((a) => a.platform === "youtube");
+    const youtube = c.accounts
+      .filter((a) => a.platform === "youtube")
+      .map((a) => {
+        const input = req.body.accounts.find(
+          (v: any) => v.platform === "youtube",
+        );
+        return input?.syncTypes !== undefined
+          ? { ...a, syncTypes: validSyncTypes("youtube", input.syncTypes) }
+          : a;
+      });
     const other = req.body.accounts
       .filter(
         (a: any) =>
@@ -109,6 +127,10 @@ app.patch("/api/creators/:id", (req, res) => {
       .map((a: any) => ({
         platform: a.platform,
         username: a.username.trim().slice(0, 100),
+        syncTypes:
+          a.syncTypes !== undefined
+            ? validSyncTypes(a.platform, a.syncTypes)
+            : undefined,
       }));
     c.accounts = [...youtube, ...other];
   }
@@ -130,15 +152,18 @@ app.post("/api/sync", async (_, res) => {
   try {
     for (const c of creators()) {
       try {
-        const channel = c.accounts.find(
-          (a) => a.platform === "youtube",
-        )?.channelId;
-        if (!channel) continue;
-        const result = await syncChannel(channel, c.id);
+        const account = c.accounts.find((a) => a.platform === "youtube");
+        const channel = account?.channelId;
+        if (!channel || !account) continue;
+        const kinds = enabledTypes(account) as Kind[];
+        if (!kinds.length) continue;
+        const result = await syncChannel(channel, c.id, kinds);
         if (!creators().some((x) => x.id === c.id)) continue;
         const current = creators().find((x) => x.id === c.id)!;
         const old = new Map(posts().map((p) => [p.id, p]));
         for (const p of result.posts) {
+          const source = current.accounts.find((a) => a.channelId === channel);
+          if (!source || !enabledTypes(source).includes(p.kind)) continue;
           const prev = old.get(p.id);
           const keepDate =
             !!prev?.published && (p.publishedApproximate || !p.published);
@@ -150,6 +175,7 @@ app.post("/api/sync", async (_, res) => {
               : p.publishedApproximate,
             read: prev?.read || false,
             saved: prev?.saved || false,
+            notes: prev?.notes || "",
           });
         }
         saveCreator({
@@ -179,6 +205,15 @@ app.patch("/api/posts/:id", (req, res) => {
   }
   if (typeof req.body.read === "boolean") p.read = req.body.read;
   if (typeof req.body.saved === "boolean") p.saved = req.body.saved;
+  if (req.body.notes !== undefined) {
+    if (typeof req.body.notes !== "string" || req.body.notes.length > 50000) {
+      res
+        .status(400)
+        .json({ error: "Notes must be text of at most 50,000 characters." });
+      return;
+    }
+    p.notes = req.body.notes;
+  }
   savePost(p);
   res.json(p);
 });

@@ -46,15 +46,25 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
   let base = "";
   const start = () =>
     new Promise<void>((resolve, reject) => {
-      proc = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
-        env: {
-          ...process.env,
-          NODE_ENV: "production",
-          PORT: "0",
-          OPENFEED_DB: path,
+      proc = spawn(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--import",
+          "./tests/fixtures/youtube-fetch.ts",
+          "server/index.ts",
+        ],
+        {
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+            PORT: "0",
+            OPENFEED_DB: path,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
         },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      );
       const timer = setTimeout(
         () => reject(new Error("Server did not start")),
         10000,
@@ -90,9 +100,46 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     await start();
     await call("creators/test-creator", "PATCH", {
       tags: [" Technology ", "Technology", "News"],
-      accounts: [{ platform: "x", username: "@test" }],
+      accounts: [
+        {
+          platform: "youtube",
+          username: "@test",
+          syncTypes: ["video", "short"],
+        },
+        { platform: "x", username: "@test", syncTypes: ["post"] },
+      ],
     });
-    await call("posts/test-post", "PATCH", { saved: true });
+    await call("posts/test-post", "PATCH", {
+      saved: true,
+      notes: "[1:01] A useful idea",
+    });
+    await call("sync", "POST");
+    let synced = await call("state");
+    assert.ok(synced.posts.every((p: any) => p.kind !== "community"));
+    assert.equal(
+      synced.posts.find((p: any) => p.id === "test-post").notes,
+      "[1:01] A useful idea",
+    );
+    await call("creators/test-creator", "PATCH", {
+      accounts: [
+        { platform: "youtube", syncTypes: ["community"] },
+        { platform: "x", username: "@test", syncTypes: ["post"] },
+      ],
+    });
+    await call("sync", "POST");
+    synced = await call("state");
+    assert.deepEqual(
+      synced.posts.find((p: any) => p.id === "test-community").images,
+      ["https://example.com/one.jpg", "https://example.com/two.jpg"],
+    );
+    const bad = await fetch(`${base}/api/creators/test-creator`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accounts: [{ platform: "youtube", syncTypes: ["post"] }],
+      }),
+    });
+    assert.equal(bad.status, 400);
     await call("read", "POST", { ids: ["test-post"] });
     assert.equal(
       (
@@ -112,8 +159,12 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     const state = await call("state");
     assert.deepEqual(state.creators[0].tags, ["Technology", "News"]);
     assert.equal(state.creators[0].accounts.length, 2);
-    assert.equal(state.posts[0].saved, true);
-    assert.equal(state.posts[0].read, true);
+    const persisted = state.posts.find((p: any) => p.id === "test-post");
+    assert.equal(persisted.saved, true);
+    assert.equal(persisted.read, true);
+    assert.equal(persisted.notes, "[1:01] A useful idea");
+    assert.deepEqual(state.creators[0].accounts[0].syncTypes, ["community"]);
+    assert.deepEqual(state.creators[0].accounts[1].syncTypes, ["post"]);
     await call("creators/test-creator", "DELETE");
     assert.deepEqual(await call("state"), { creators: [], posts: [] });
   } finally {

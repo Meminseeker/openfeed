@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import type { Post } from "../src/types.ts";
+import type { Post, Kind } from "../src/types.ts";
 const text = (v: any): string =>
   v?.simpleText || v?.runs?.map((r: any) => r.text).join("") || "";
 export function initialData(html: string): any {
@@ -126,7 +126,11 @@ export function publicPosts(
           saved: false,
         });
       }
-    } else if (key === "backstagePostRenderer" && v.postId) {
+    } else if (
+      kind === "community" &&
+      key === "backstagePostRenderer" &&
+      v.postId
+    ) {
       if (
         channelId &&
         (v.authorEndpoint?.browseEndpoint?.browseId ||
@@ -135,14 +139,33 @@ export function publicPosts(
       )
         return;
       const id = v.postId;
-      const thumbs =
-        v.backstageAttachment?.backstageImageRenderer?.image?.thumbnails;
+      const images: string[] = [];
+      let videoId: string | undefined;
+      walk(v.backstageAttachment, (key, attachment) => {
+        if (key === "backstageImageRenderer") {
+          const thumbs = attachment.image?.thumbnails;
+          const best = Array.isArray(thumbs)
+            ? [...thumbs].sort((a, b) => (b.width || 0) - (a.width || 0))[0]
+                ?.url
+            : undefined;
+          if (
+            typeof best === "string" &&
+            /^https:\/\//.test(best) &&
+            !images.includes(best)
+          )
+            images.push(best);
+        }
+        if (key === "videoRenderer" && typeof attachment.videoId === "string")
+          videoId = attachment.videoId;
+      });
       posts.set(id, {
         id,
         creatorId,
         title: "Community post",
         text: text(v.contentText),
-        image: thumbs?.at(-1)?.url,
+        image: images[0],
+        images,
+        videoId,
         url: `https://www.youtube.com/post/${id}`,
         kind,
         published: relativeDate(text(v.publishedTimeText)),
@@ -218,49 +241,75 @@ export async function resolveChannel(input: string) {
     throw new Error("Could not find this public YouTube channel.");
   return { id, name, avatar };
 }
-export async function syncChannel(channelId: string, creatorId: string) {
-  const xml = await get(
-    `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
-  );
-  const feed = new XMLParser({ ignoreAttributes: false }).parse(xml).feed;
-  const entries = feed?.entry
-    ? Array.isArray(feed.entry)
-      ? feed.entry
-      : [feed.entry]
-    : [];
-  const posts: Post[] = entries.map((e: any) => ({
-    id: e["yt:videoId"],
-    creatorId,
-    title: e.title,
-    url: `https://www.youtube.com/watch?v=${e["yt:videoId"]}`,
-    image: `https://i.ytimg.com/vi/${e["yt:videoId"]}/hqdefault.jpg`,
-    kind: "video",
-    published: e.published,
-    read: false,
-    saved: false,
-  }));
+export async function syncChannel(
+  channelId: string,
+  creatorId: string,
+  kinds: Kind[] = ["video", "short", "community"],
+) {
+  const selected = [...new Set(kinds)];
+  if (!selected.length) return { posts: [] as Post[], warning: "" };
   const warnings: string[] = [];
-  for (const kind of ["video", "short", "community"] as const) {
+  const uploads = new Map<string, Post>();
+  if (selected.includes("video") || selected.includes("short")) {
+    try {
+      const xml = await get(
+        `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
+      );
+      const feed = new XMLParser({ ignoreAttributes: false }).parse(xml).feed;
+      const entries = feed?.entry
+        ? Array.isArray(feed.entry)
+          ? feed.entry
+          : [feed.entry]
+        : [];
+      for (const e of entries) {
+        const id = e["yt:videoId"];
+        uploads.set(id, {
+          id,
+          creatorId,
+          title: e.title,
+          url: `https://www.youtube.com/watch?v=${id}`,
+          image: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          kind: "video",
+          published: e.published,
+          read: false,
+          saved: false,
+        });
+      }
+    } catch {
+      warnings.push("Upload feed unavailable");
+    }
+  }
+  const posts = new Map<string, Post>();
+  for (const kind of selected) {
     try {
       const data = initialData(
         await get(
           `https://www.youtube.com/channel/${channelId}/${kind === "short" ? "shorts" : kind === "video" ? "videos" : "posts"}`,
         ),
       );
-      const extras = publicPosts(data, creatorId, kind, channelId);
-      for (const p of extras) {
-        const existing = posts.find((x) => x.id === p.id);
-        if (existing) {
-          existing.kind = kind;
-          existing.url = p.url;
-          existing.duration = p.duration || existing.duration;
-        } else posts.push(p);
+      for (const p of publicPosts(data, creatorId, kind, channelId)) {
+        const rss = uploads.get(p.id);
+        posts.set(p.id, {
+          ...p,
+          ...(rss
+            ? {
+                title: rss.title,
+                published: rss.published,
+                publishedApproximate: false,
+              }
+            : {}),
+        });
       }
     } catch {
       warnings.push(
-        `${kind === "short" ? "Shorts classification" : kind === "video" ? "Videos tab" : "Community posts"} unavailable`,
+        `${kind === "short" ? "Shorts" : kind === "video" ? "Videos" : "Community posts"} tab unavailable`,
       );
     }
   }
-  return { posts, warning: warnings.join("; ") };
+  // Unclassified RSS entries are safe only when BOTH upload kinds are selected.
+  // Otherwise the selected tab is the authority, so disabled types never leak in.
+  if (selected.includes("video") && selected.includes("short")) {
+    for (const [id, p] of uploads) if (!posts.has(id)) posts.set(id, p);
+  }
+  return { posts: [...posts.values()], warning: warnings.join("; ") };
 }

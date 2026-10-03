@@ -17,25 +17,17 @@ import {
   Menu,
   Trash2,
 } from "lucide-react";
-import type { State, Creator, Post, Kind } from "./types";
+import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
+import { enabledTypes, sourceTypes, syncLabels } from "./types";
+import { api } from "./api";
+import { ContentViewer } from "./ContentViewer";
+import { LinkActions } from "./LinkActions";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
 import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
-async function api(path: string, method = "GET", body?: unknown) {
-  const r = await fetch(`/api/${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(e.error || "Request failed");
-  }
-  return r.json();
-}
 const labels: Record<Kind, string> = {
   video: "Videos",
   short: "Shorts",
@@ -56,7 +48,9 @@ function App() {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [mobile, setMobile] = useState(false),
-    [limit, setLimit] = useState(24);
+    [limit, setLimit] = useState(24),
+    [viewerIds, setViewerIds] = useState<string[]>([]),
+    [viewerIndex, setViewerIndex] = useState(0);
   const load = async () => {
     try {
       setState(await api("state"));
@@ -115,6 +109,19 @@ function App() {
       );
     })
     .sort((a, b) => b.published.localeCompare(a.published));
+  const viewPost = (p: Post) => {
+    setViewerIds(visible.map((item) => item.id));
+    setViewerIndex(visible.findIndex((item) => item.id === p.id));
+    if (!p.read) void mutate(p, "read");
+  };
+  const viewerPost = state.posts.find((p) => p.id === viewerIds[viewerIndex]);
+  const moveViewer = (delta: number) => {
+    const index = viewerIndex + delta;
+    if (index < 0 || index >= viewerIds.length) return;
+    setViewerIndex(index);
+    const p = state.posts.find((p) => p.id === viewerIds[index]);
+    if (p && !p.read) void mutate(p, "read");
+  };
   const navigate = (p: string) => {
     setPage(p);
     setMobile(false);
@@ -122,7 +129,10 @@ function App() {
   };
   return (
     <div className="app">
-      <aside className={mobile ? "sidebar open" : "sidebar"}>
+      <aside
+        inert={!!viewerPost || modal}
+        className={mobile ? "sidebar open" : "sidebar"}
+      >
         <a
           className="brand"
           href="#"
@@ -207,7 +217,7 @@ function App() {
           </div>
         </div>
       </aside>
-      <main>
+      <main inert={!!viewerPost || modal}>
         <header>
           <button
             className="menu"
@@ -495,6 +505,7 @@ function App() {
                       p={p}
                       c={state.creators.find((c) => c.id === p.creatorId)!}
                       mutate={mutate}
+                      open={() => viewPost(p)}
                     />
                   ))}
                 </div>
@@ -530,6 +541,23 @@ function App() {
           )}
         </div>
       </main>
+      {viewerPost && (
+        <ContentViewer
+          post={viewerPost}
+          creator={state.creators.find((c) => c.id === viewerPost.creatorId)!}
+          index={viewerIndex}
+          total={viewerIds.length}
+          close={() => setViewerIds([])}
+          navigate={moveViewer}
+          onNotesSaved={(id, notes) =>
+            setState((s) => ({
+              ...s,
+              posts: s.posts.map((p) => (p.id === id ? { ...p, notes } : p)),
+            }))
+          }
+          onSave={() => void mutate(viewerPost, "saved")}
+        />
+      )}
       {modal && (
         <CreatorModal
           creator={editing}
@@ -598,7 +626,9 @@ function PostCard({
   p,
   c,
   mutate,
+  open,
 }: {
+  open: () => void;
   p: Post;
   c: Creator;
   mutate: (p: Post, f: "read" | "saved") => Promise<void>;
@@ -634,19 +664,16 @@ function PostCard({
           <Bookmark size={18} fill={p.saved ? "currentColor" : "none"} />
         </button>
       </div>
-      <a
+      <button
+        type="button"
         className="post-link"
-        href={p.url}
-        target="_blank"
-        rel="noreferrer"
-        onClick={() => {
-          if (!p.read) void mutate(p, "read");
-        }}
+        aria-label={`View ${p.title}`}
+        onClick={open}
       >
-        {p.image && (
+        {(p.images?.[0] || p.image) && (
           <div className={`thumbnail ${p.kind}`}>
             <img
-              src={p.image}
+              src={p.images?.[0] || p.image}
               alt=""
               loading="lazy"
               referrerPolicy="no-referrer"
@@ -655,6 +682,9 @@ function PostCard({
               <span className="play">
                 <Play size={20} fill="currentColor" />
               </span>
+            )}
+            {p.images && p.images.length > 1 && (
+              <span className="album-count">{p.images.length} images</span>
             )}
             {p.duration && <span className="duration">{p.duration}</span>}
             <span className="kind">
@@ -675,17 +705,55 @@ function PostCard({
             ))}
           </div>
         </div>
-      </a>
+      </button>
       <div className="post-footer">
         <button onClick={() => void mutate(p, "read")}>
           <Check size={14} />
           {p.read ? "Read" : "Mark as read"}
         </button>
-        <a href={p.url} target="_blank" rel="noreferrer">
-          Open on YouTube <ArrowUpRight size={14} />
-        </a>
+        <LinkActions url={p.url} compact />
       </div>
     </article>
+  );
+}
+function SyncChoices({
+  account,
+  change,
+}: {
+  account: Account;
+  change: (types: SyncType[]) => void;
+}) {
+  const selected = enabledTypes(account);
+  return (
+    <fieldset className="sync-choices">
+      <legend>
+        Content to sync from{" "}
+        {account.platform === "youtube"
+          ? "YouTube"
+          : account.platform === "x"
+            ? "X"
+            : account.platform}
+      </legend>
+      {(sourceTypes[account.platform] || []).map((kind) => (
+        <label key={kind}>
+          <input
+            type="checkbox"
+            checked={selected.includes(kind)}
+            onChange={() =>
+              change(
+                selected.includes(kind)
+                  ? selected.filter((k) => k !== kind)
+                  : [...selected, kind],
+              )
+            }
+          />
+          {syncLabels[kind]}
+        </label>
+      ))}
+      {!selected.length && (
+        <span className="sync-paused">Sync paused for this source</span>
+      )}
+    </fieldset>
   );
 }
 function CreatorModal({
@@ -701,8 +769,14 @@ function CreatorModal({
   const [name, setName] = useState(creator?.name || ""),
     [channel, setChannel] = useState(""),
     [tags, setTags] = useState(creator?.tags.join(", ") || ""),
-    [accounts, setAccounts] = useState(
-      creator?.accounts.filter((a) => a.platform !== "youtube") || [],
+    [accounts, setAccounts] = useState<Account[]>(
+      creator?.accounts || [
+        {
+          platform: "youtube",
+          username: "",
+          syncTypes: ["video", "short", "community"],
+        },
+      ],
     ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -810,42 +884,71 @@ function CreatorModal({
               Separate topics with commas. A creator can belong to several.
             </small>
           </label>
-          {creator && (
-            <div className="connected">
+          <div className="source-settings">
+            <div className="source-heading">
               <strong>YouTube</strong>
-              <span>
-                {
-                  creator.accounts.find((a) => a.platform === "youtube")
-                    ?.username
-                }
-              </span>
-              <small>{creator.error || "Public content sync enabled"}</small>
+              <span>Sync enabled</span>
             </div>
-          )}
+            {creator && (
+              <small>
+                {accounts.find((a) => a.platform === "youtube")?.username}
+              </small>
+            )}
+            <SyncChoices
+              account={accounts.find((a) => a.platform === "youtube")!}
+              change={(syncTypes) =>
+                setAccounts(
+                  accounts.map((a) =>
+                    a.platform === "youtube" ? { ...a, syncTypes } : a,
+                  ),
+                )
+              }
+            />
+            <small>
+              {creator?.error ||
+                "Choose what to fetch on the next refresh. Existing posts and notes are kept."}
+            </small>
+          </div>
           <details>
             <summary>
               Other accounts <span>Save now, sync in a future phase</span>
             </summary>
-            {["instagram", "x", "tiktok", "patreon"].map((platform) => (
-              <label key={platform}>
-                {platform === "x"
-                  ? "X (Twitter)"
-                  : platform[0].toUpperCase() + platform.slice(1)}
-                <input
-                  value={
-                    accounts.find((a) => a.platform === platform)?.username ||
-                    ""
-                  }
-                  placeholder="Username or profile URL"
-                  onChange={(e) =>
-                    setAccounts([
-                      ...accounts.filter((a) => a.platform !== platform),
-                      { platform, username: e.target.value },
-                    ])
-                  }
-                />
-              </label>
-            ))}
+            {["instagram", "x", "tiktok", "patreon"].map((platform) => {
+              const account = accounts.find((a) => a.platform === platform) || {
+                platform,
+                username: "",
+              };
+              const update = (patch: Partial<Account>) =>
+                setAccounts([
+                  ...accounts.filter((a) => a.platform !== platform),
+                  { ...account, ...patch },
+                ]);
+              return (
+                <div className="planned-source" key={platform}>
+                  <label>
+                    {platform === "x"
+                      ? "X (Twitter)"
+                      : platform[0].toUpperCase() + platform.slice(1)}
+                    <input
+                      value={account.username}
+                      placeholder="Username or profile URL"
+                      onChange={(e) => update({ username: e.target.value })}
+                    />
+                  </label>
+                  {account.username.trim() && (
+                    <>
+                      <SyncChoices
+                        account={account}
+                        change={(syncTypes) => update({ syncTypes })}
+                      />
+                      <small>
+                        Preferences saved · Sync integration coming later
+                      </small>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </details>
           {error && (
             <div className="error" role="alert">
