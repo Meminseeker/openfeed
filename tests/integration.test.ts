@@ -58,6 +58,9 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
         {
           env: {
             ...process.env,
+            X_BEARER_TOKEN: "",
+            INSTAGRAM_ACCESS_TOKEN: "",
+            INSTAGRAM_USER_ID: "",
             NODE_ENV: "production",
             PORT: "0",
             OPENFEED_DB: path,
@@ -189,6 +192,41 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     assert.equal(persisted.notes, "[1:01] A useful idea");
     assert.deepEqual(state.creators[0].accounts[0].syncTypes, ["community"]);
     assert.deepEqual(state.creators[0].accounts[1].syncTypes, ["post"]);
+    const ig = await call("creators", "POST", {
+      platform: "instagram",
+      channel: "https://instagram.com/testig/",
+    });
+    await call(`creators/${ig.id}`, "PATCH", {
+      accounts: [
+        { platform: "instagram", username: "@testig", syncTypes: ["post"] },
+      ],
+    });
+    await call("sync", "POST");
+    let igPost = (await call("state")).posts.find(
+      (p: any) => p.creatorId === ig.id,
+    );
+    assert.equal(igPost.platform, "instagram");
+    assert.equal(igPost.images.length, 2);
+    await call(`posts/${igPost.id}`, "PATCH", {
+      notes: "An Instagram note",
+      saved: true,
+    });
+    await call(`creators/${ig.id}`, "PATCH", {
+      accounts: [{ platform: "instagram", username: "testig", syncTypes: [] }],
+    });
+    await call("sync", "POST");
+    igPost = (await call("state")).posts.find(
+      (p: any) => p.creatorId === ig.id,
+    );
+    assert.equal(igPost.notes, "An Instagram note");
+    assert.equal(igPost.saved, true);
+    const duplicate = await fetch(`${base}/api/creators`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "instagram", channel: "@TESTIG" }),
+    });
+    assert.equal(duplicate.status, 409);
+    await call(`creators/${ig.id}`, "DELETE");
     await call("creators/test-creator", "DELETE");
     assert.deepEqual(await call("state"), { creators: [], posts: [] });
   } finally {

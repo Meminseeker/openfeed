@@ -2,6 +2,10 @@
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
+  if (url.startsWith("https://www.instagram.com/"))
+    return new Response(
+      `<script type="application/json">${JSON.stringify({ data: { user: { username: new URL(url).pathname.split("/")[1], is_private: false, edge_owner_to_timeline_media: { edges: [{ node: { shortcode: "testAlbum", edge_media_to_caption: { edges: [{ node: { text: "Instagram test album" } }] }, edge_sidecar_to_children: { edges: [{ node: { display_url: "https://scontent.cdninstagram.com/one.jpg" } }, { node: { display_url: "https://scontent.cdninstagram.com/two.jpg" } }] } } }] } } } })}</script>`,
+    );
   if (url.startsWith("https://syndication.twitter.com/"))
     return new Response(
       `<script id="__NEXT_DATA__">${JSON.stringify({ props: { pageProps: { timeline: { entries: [{ type: "tweet", content: { tweet: { id_str: "123", user: { screen_name: url.split("/").at(-1), protected: false }, full_text: "A public X post", created_at: "Mon Sep 08 09:00:17 +0000 2025" } } }] } } } })}</script>`,

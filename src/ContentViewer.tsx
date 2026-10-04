@@ -56,7 +56,9 @@ export function ContentViewer({
     post.images !== undefined ? post.images : post.image ? [post.image] : [];
   const [videoIndex, setVideoIndex] = useState(0);
   const videoId =
-    post.platform === "x" || post.kind === "post"
+    post.platform === "x" ||
+    post.platform === "instagram" ||
+    post.kind === "post"
       ? undefined
       : post.kind === "community"
         ? post.videoId
@@ -204,7 +206,7 @@ export function ContentViewer({
     if (native.current) {
       const tracks = Array.from(native.current.textTracks);
       if (!tracks.length) {
-        setHint("This X video has no caption track available.");
+        setHint("This video has no caption track available.");
         return;
       }
       tracks.forEach((t) => (t.mode = captions ? "disabled" : "showing"));
@@ -303,7 +305,12 @@ export function ContentViewer({
             <div>
               <strong>{creator.name}</strong>
               <small>
-                {post.platform === "x" ? "X" : "YouTube"} ·{" "}
+                {post.platform === "x"
+                  ? "X"
+                  : post.platform === "instagram"
+                    ? "Instagram"
+                    : "YouTube"}{" "}
+                ·{" "}
                 {post.kind === "post"
                   ? post.repost
                     ? "Repost"
@@ -360,7 +367,7 @@ export function ContentViewer({
                       onEnded={() => setPlaying(false)}
                       onError={() =>
                         setError(
-                          "This X video couldn't load. Try again or open the source.",
+                          "This video couldn't load. Try again or open the source.",
                         )
                       }
                     />
@@ -448,7 +455,8 @@ export function ContentViewer({
                 )}
               </>
             ) : null}
-            {images.length > 0 && (!isVideo || post.platform === "x") ? (
+            {images.length > 0 &&
+            (!isVideo || (!!post.platform && post.platform !== "youtube")) ? (
               <div className="image-viewer">
                 <div
                   className="image-stage"
@@ -533,6 +541,14 @@ export function ContentViewer({
                 )}
               </div>
             ) : null}
+            {post.platform === "instagram" &&
+              ["video", "short"].includes(post.kind) &&
+              !post.videos?.length && (
+                <p className="player-hint">
+                  Instagram did not expose a playable video for this post. Use
+                  Open source to watch it.
+                </p>
+              )}
             {post.text && <div className="viewer-text">{post.text}</div>}
             <div className="viewer-tags">
               {creator.tags.map((t) => (

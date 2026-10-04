@@ -32,7 +32,7 @@ const labels: Record<Kind, string> = {
   video: "Videos",
   short: "Shorts",
   community: "Community",
-  post: "X posts",
+  post: "Posts",
 };
 function App() {
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
@@ -293,7 +293,9 @@ function App() {
                 <h2>
                   Your creators <span>{state.creators.length}</span>
                 </h2>
-                <span>YouTube & X are live · More platforms soon</span>
+                <span>
+                  YouTube, X & Instagram are live · More platforms soon
+                </span>
               </div>
               <div className="creator-grid">
                 {state.creators.map((c) => (
@@ -331,7 +333,7 @@ function App() {
               {!state.creators.length && !loading && (
                 <Empty
                   title="Start with someone you love following."
-                  text="Add a YouTube or X creator, give them a few topics, and make this space your own."
+                  text="Add a YouTube, X or Instagram creator, give them a few topics, and make this space your own."
                   action={() => setModal(true)}
                 />
               )}
@@ -443,7 +445,7 @@ function App() {
               <div className="feed-info">
                 <span>
                   <span className="live-dot" />
-                  YouTube + X{" "}
+                  YouTube + X + Instagram{" "}
                   <span className="muted">
                     · Chronological · {visible.length} posts
                   </span>
@@ -485,7 +487,7 @@ function App() {
                   text={
                     state.creators.length
                       ? "Refresh to fetch public posts, or adjust your filters."
-                      : "Add your first YouTube or X creator. No recommendations, no endless scroll—just the people you choose."
+                      : "Add your first creator. No recommendations, no endless scroll—just the people you choose."
                   }
                   action={
                     state.creators.length
@@ -535,9 +537,9 @@ function App() {
               )}
               <div className="source-note">
                 Public content only. YouTube uploads and community posts, plus
-                available X posts. X public snapshots can omit recent posts. ≈
-                Approximate date; undated posts appear last. No ads or
-                recommendations added by OpenFeed.
+                available X and Instagram posts. X public snapshots can omit
+                recent posts. ≈ Approximate date; undated posts appear last. No
+                ads or recommendations added by OpenFeed.
               </div>
             </>
           )}
@@ -662,7 +664,13 @@ function PostCard({
               : "Date unavailable"}{" "}
             <span>
               ·{" "}
-              {p.platform === "x" ? (p.repost ? "X · Repost" : "X") : "YouTube"}
+              {p.platform === "x"
+                ? p.repost
+                  ? "X · Repost"
+                  : "X"
+                : p.platform === "instagram"
+                  ? "Instagram"
+                  : "YouTube"}
             </span>
           </small>
         </div>
@@ -705,7 +713,9 @@ function PostCard({
                 : p.kind === "community"
                   ? "COMMUNITY"
                   : p.kind === "post"
-                    ? "X POST"
+                    ? p.platform === "instagram"
+                      ? "INSTAGRAM"
+                      : "X POST"
                     : "VIDEO"}
             </span>
           </div>
@@ -887,27 +897,40 @@ function CreatorModal({
                       syncTypes:
                         e.target.value === "x"
                           ? ["post"]
-                          : ["video", "short", "community"],
+                          : e.target.value === "instagram"
+                            ? ["post", "video", "short"]
+                            : ["video", "short", "community"],
                     },
                   ]);
                 }}
               >
                 <option value="youtube">YouTube</option>
                 <option value="x">X (Twitter)</option>
+                <option value="instagram">Instagram</option>
               </select>
-              {platform === "x" ? "X account" : "YouTube channel"}
+              {platform === "x"
+                ? "X account"
+                : platform === "instagram"
+                  ? "Instagram account"
+                  : "YouTube channel"}
               <input
                 autoFocus
                 required
                 placeholder={
                   platform === "x"
                     ? "@username or an X profile URL"
-                    : "@mkbhd or a YouTube channel URL"
+                    : platform === "instagram"
+                      ? "@username or an Instagram profile URL"
+                      : "@mkbhd or a YouTube channel URL"
                 }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
               />
-              <small>Public channels only. No sign-in or API key needed.</small>
+              <small>
+                {platform === "instagram"
+                  ? "Public accounts only. Instagram may block access; see source details below."
+                  : "Public channels only. No sign-in or API key needed."}
+              </small>
             </label>
           )}
           <label>
@@ -1023,11 +1046,61 @@ function CreatorModal({
                 "Limited public snapshot: X may return older posts and omit recent ones. No sign-in needed."}
             </small>
           </div>
+          <div className="source-settings">
+            <div className="source-heading">
+              <strong>Instagram</strong>
+              <span>Public content</span>
+            </div>
+            {!(!creator && platform === "instagram") && (
+              <label>
+                Instagram username or profile URL
+                <input
+                  value={
+                    accounts.find((a) => a.platform === "instagram")
+                      ?.username || ""
+                  }
+                  placeholder="@username or https://instagram.com/username/"
+                  onChange={(e) =>
+                    setAccounts([
+                      ...accounts.filter((a) => a.platform !== "instagram"),
+                      {
+                        ...accounts.find((a) => a.platform === "instagram"),
+                        platform: "instagram",
+                        username: e.target.value,
+                      },
+                    ])
+                  }
+                />
+              </label>
+            )}
+            {(accounts.find((a) => a.platform === "instagram")?.username ||
+              platform === "instagram") && (
+              <SyncChoices
+                account={
+                  accounts.find((a) => a.platform === "instagram") || {
+                    platform: "instagram",
+                    username: "",
+                  }
+                }
+                change={(syncTypes) =>
+                  setAccounts(
+                    accounts.map((a) =>
+                      a.platform === "instagram" ? { ...a, syncTypes } : a,
+                    ),
+                  )
+                }
+              />
+            )}
+            <small>
+              {accounts.find((a) => a.platform === "instagram")?.error ||
+                "No login needed. Public profile embeds show a small recent preview, usually 6 posts. Posts includes albums; Shorts includes Reels. Some profiles disable embeds."}
+            </small>
+          </div>
           <details>
             <summary>
               Other accounts <span>Save now, sync in a future phase</span>
             </summary>
-            {["instagram", "tiktok", "patreon"].map((platform) => {
+            {["tiktok", "patreon"].map((platform) => {
               const account = accounts.find((a) => a.platform === platform) || {
                 platform,
                 username: "",

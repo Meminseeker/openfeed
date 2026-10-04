@@ -1,3 +1,4 @@
+import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername } from "./x.ts";
 import express from "express";
 import { DatabaseSync } from "node:sqlite";
@@ -64,18 +65,28 @@ app.get("/api/state", (_, res) =>
 );
 app.post("/api/creators", async (req, res, next) => {
   try {
-    const platform = req.body.platform === "x" ? "x" : "youtube";
+    const platform = ["x", "instagram"].includes(req.body.platform)
+      ? req.body.platform
+      : "youtube";
     const input = String(req.body.channel || "");
     const channel =
       platform === "youtube" ? await resolveChannel(input) : undefined;
-    const username = platform === "x" ? xUsername(input) : input;
+    const username =
+      platform === "x"
+        ? xUsername(input)
+        : platform === "instagram"
+          ? instagramUsername(input)
+          : input;
     if (
       creators().some((c) =>
         c.accounts.some((a) =>
           platform === "youtube"
             ? a.channelId === channel!.id
-            : a.platform === "x" &&
-              xUsername(a.username).toLowerCase() === username.toLowerCase(),
+            : a.platform === platform &&
+              (platform === "x"
+                ? xUsername(a.username)
+                : instagramUsername(a.username)
+              ).toLowerCase() === username.toLowerCase(),
         ),
       )
     ) {
@@ -153,25 +164,26 @@ app.patch("/api/creators/:id", async (req, res) => {
     }
     for (const a of req.body.accounts.filter(
       (a: any) =>
-        a.platform === "x" &&
+        ["x", "instagram"].includes(a.platform) &&
         typeof a.username === "string" &&
         a.username.trim(),
     )) {
-      const username = xUsername(a.username);
+      const normalize = a.platform === "x" ? xUsername : instagramUsername;
+      const username = normalize(a.username);
       if (
         creators().some(
           (other) =>
             other.id !== c.id &&
             other.accounts.some(
               (old) =>
-                old.platform === "x" &&
-                xUsername(old.username).toLowerCase() ===
+                old.platform === a.platform &&
+                normalize(old.username).toLowerCase() ===
                   username.toLowerCase(),
             ),
         )
       )
         throw new Error(
-          "You already follow this X account under another creator.",
+          "You already follow this account under another creator.",
         );
     }
     const other = req.body.accounts
@@ -185,16 +197,24 @@ app.patch("/api/creators/:id", async (req, res) => {
         ...c.accounts.find(
           (old) =>
             old.platform === a.platform &&
-            (a.platform === "x"
-              ? xUsername(old.username).toLowerCase() ===
-                xUsername(a.username).toLowerCase()
+            (["x", "instagram"].includes(a.platform)
+              ? (a.platform === "x"
+                  ? xUsername(old.username)
+                  : instagramUsername(old.username)
+                ).toLowerCase() ===
+                (a.platform === "x"
+                  ? xUsername(a.username)
+                  : instagramUsername(a.username)
+                ).toLowerCase()
               : old.username === a.username.trim()),
         ),
         platform: a.platform,
         username:
           a.platform === "x"
             ? xUsername(a.username)
-            : a.username.trim().slice(0, 100),
+            : a.platform === "instagram"
+              ? instagramUsername(a.username)
+              : a.username.trim().slice(0, 100),
         syncTypes:
           a.syncTypes !== undefined
             ? validSyncTypes(a.platform, a.syncTypes)
@@ -220,7 +240,7 @@ app.post("/api/sync", async (_, res) => {
   try {
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
-        ["youtube", "x"].includes(a.platform),
+        ["youtube", "x", "instagram"].includes(a.platform),
       )) {
         if (!enabledTypes(account).length) continue;
         const sameSource = (a: Creator["accounts"][number]) =>
@@ -232,11 +252,17 @@ app.post("/api/sync", async (_, res) => {
           const result =
             account.platform === "x"
               ? await syncX(account.username, c.id, account.xSinceId)
-              : await syncChannel(
-                  account.channelId!,
-                  c.id,
-                  enabledTypes(account) as Kind[],
-                );
+              : account.platform === "instagram"
+                ? await syncInstagram(
+                    account.username,
+                    c.id,
+                    enabledTypes(account),
+                  )
+                : await syncChannel(
+                    account.channelId!,
+                    c.id,
+                    enabledTypes(account) as Kind[],
+                  );
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (!current || !source || !enabledTypes(source).length) continue;
@@ -268,7 +294,7 @@ app.post("/api/sync", async (_, res) => {
             current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : "YouTube"}: ${a.error}`
+                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : "YouTube"}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
@@ -282,7 +308,7 @@ app.post("/api/sync", async (_, res) => {
             current.error = current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : "YouTube"}: ${a.error}`
+                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : "YouTube"}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
