@@ -1,3 +1,9 @@
+import {
+  contentFilters,
+  contentFilterKey,
+  topicCreators,
+  eligibleSelection,
+} from "./feed-filters";
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -28,19 +34,13 @@ import "@fontsource/dm-sans/600.css";
 import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
-const labels: Record<Kind, string> = {
-  video: "Videos",
-  short: "Shorts",
-  community: "Community",
-  post: "Posts",
-};
 function App() {
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
     [page, setPage] = useState("feed"),
     [tag, setTag] = useState("All topics"),
     [query, setQuery] = useState(""),
-    [types, setTypes] = useState<Kind[]>([]),
-    [creatorFilter, setCreatorFilter] = useState(""),
+    [types, setTypes] = useState<string[]>([]),
+    [creatorFilter, setCreatorFilter] = useState<string[]>([]),
     [unread, setUnread] = useState(false),
     [filters, setFilters] = useState(false),
     [modal, setModal] = useState(false),
@@ -94,6 +94,16 @@ function App() {
     }
   };
   const tags = [...new Set(state.creators.flatMap((c) => c.tags))].sort();
+  const eligibleCreators = topicCreators(state.creators, tag);
+  useEffect(() => {
+    setCreatorFilter((current) => {
+      const next = eligibleSelection(
+        current,
+        topicCreators(state.creators, tag),
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, [tag, state.creators]);
   const visible = state.posts
     .filter((p) => {
       const c = state.creators.find((c) => c.id === p.creatorId);
@@ -101,8 +111,8 @@ function App() {
         c &&
         (page !== "saved" || p.saved) &&
         (tag === "All topics" || c.tags.includes(tag)) &&
-        (!types.length || types.includes(p.kind)) &&
-        (!creatorFilter || c.id === creatorFilter) &&
+        (!types.length || types.includes(contentFilterKey(p))) &&
+        (!creatorFilter.length || creatorFilter.includes(c.id)) &&
         (!unread || !p.read) &&
         `${p.title} ${p.text || ""} ${c.name}`
           .toLowerCase()
@@ -363,7 +373,7 @@ function App() {
                   >
                     <SlidersHorizontal size={16} />
                     Filters
-                    {(types.length > 0 || creatorFilter) && (
+                    {(types.length > 0 || creatorFilter.length > 0) && (
                       <span className="filter-dot" />
                     )}
                   </button>
@@ -399,15 +409,16 @@ function App() {
                 <div className="filters">
                   <div>
                     <span>Content type</span>
-                    {Object.entries(labels).map(([k, v]) => (
+                    {contentFilters.map(([k, v]) => (
                       <button
                         key={k}
-                        className={types.includes(k as Kind) ? "selected" : ""}
+                        aria-pressed={types.includes(k)}
+                        className={types.includes(k) ? "selected" : ""}
                         onClick={() =>
                           setTypes(
-                            types.includes(k as Kind)
+                            types.includes(k)
                               ? types.filter((t) => t !== k)
-                              : [...types, k as Kind],
+                              : [...types, k],
                           )
                         }
                       >
@@ -415,24 +426,47 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  <label>
-                    Creator{" "}
-                    <select
-                      value={creatorFilter}
-                      onChange={(e) => setCreatorFilter(e.target.value)}
+                  <fieldset className="creator-filters">
+                    <legend>
+                      Creators {tag !== "All topics" && <small>in {tag}</small>}
+                    </legend>
+                    <button
+                      type="button"
+                      aria-pressed={!creatorFilter.length}
+                      className={!creatorFilter.length ? "selected" : ""}
+                      onClick={() => setCreatorFilter([])}
                     >
-                      <option value="">All creators</option>
-                      {state.creators.map((c) => (
-                        <option key={c.id} value={c.id}>
+                      All creators in this topic
+                    </button>
+                    <div className="creator-options">
+                      {eligibleCreators.map((c) => (
+                        <label key={c.id}>
+                          <input
+                            type="checkbox"
+                            checked={creatorFilter.includes(c.id)}
+                            onChange={() =>
+                              setCreatorFilter((current) =>
+                                current.includes(c.id)
+                                  ? current.filter((id) => id !== c.id)
+                                  : [...current, c.id],
+                              )
+                            }
+                          />
                           {c.name}
-                        </option>
+                        </label>
                       ))}
-                    </select>
-                  </label>
+                      {!eligibleCreators.length && (
+                        <small>No creators in this topic.</small>
+                      )}
+                    </div>
+                    <small>
+                      Select several creators. No selection shows all.
+                    </small>
+                  </fieldset>
                   <button
                     onClick={() => {
                       setTypes([]);
-                      setCreatorFilter("");
+                      setCreatorFilter([]);
                       setTag("All topics");
                       setQuery("");
                       setUnread(false);

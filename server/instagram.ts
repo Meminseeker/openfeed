@@ -207,6 +207,29 @@ function pageProfile(html: string, username: string) {
   instagramPageData(html).forEach((v) => walk(v));
   return { user, media };
 }
+// Detail enrichment is limited to a shortcode already listed by the approved profile.
+function pagePost(html: string, shortcode: string) {
+  let media: any;
+  let privateMedia = false;
+  function walk(value: any, depth = 0) {
+    if (depth > 80) return;
+    if (typeof value === "string" && /^[{[]/.test(value)) {
+      try {
+        walk(JSON.parse(value), depth + 1);
+      } catch {}
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const candidate = value.shortcode_media;
+    if (candidate?.shortcode === shortcode) {
+      if (candidate.owner?.is_private) privateMedia = true;
+      media = candidate;
+    }
+    for (const child of Object.values(value)) walk(child, depth + 1);
+  }
+  instagramPageData(html).forEach((v) => walk(v));
+  return privateMedia ? undefined : media;
+}
 export function parseInstagramProfile(
   html: string,
   username: string,
@@ -307,7 +330,13 @@ export async function syncInstagram(
       const hasVideo =
         m.is_video ||
         m.edge_sidecar_to_children?.edges?.some((e: any) => e.node?.is_video);
-      if (!hasVideo || !/^[a-zA-Z0-9_-]+$/.test(m.shortcode || "")) continue;
+      if (
+        !hasVideo ||
+        m.owner?.username?.toLowerCase() !== username ||
+        m.owner?.is_private ||
+        !/^[a-zA-Z0-9_-]+$/.test(m.shortcode || "")
+      )
+        continue;
       if (
         m.is_video &&
         !selected.includes("video") &&
@@ -323,12 +352,9 @@ export async function syncInstagram(
           },
         );
         if (!detail.ok) throw new Error("Unavailable embed");
-        const items = pageProfile(await detail.text(), username).media;
-        const enriched = items.find(
-          (p: any) => p.shortcode === m.shortcode && !p.owner?.is_private,
-        );
+        const enriched = pagePost(await detail.text(), m.shortcode);
         if (!enriched) throw new Error("Unavailable media");
-        result.media[i] = { ...m, ...enriched };
+        result.media[i] = { ...m, ...enriched, owner: m.owner };
       } catch {
         detailFailed = true;
       }

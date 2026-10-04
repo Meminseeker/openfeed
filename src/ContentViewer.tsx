@@ -351,7 +351,11 @@ export function ContentViewer({
                     <video
                       key={nativeVideo.url}
                       ref={native}
-                      src={nativeVideo.url}
+                      src={
+                        post.platform === "x"
+                          ? `/api/posts/${encodeURIComponent(post.id)}/video/${videoIndex}`
+                          : nativeVideo.url
+                      }
                       poster={nativeVideo.poster}
                       controls
                       playsInline

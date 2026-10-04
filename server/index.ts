@@ -1,3 +1,4 @@
+import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername } from "./x.ts";
 import express from "express";
@@ -322,6 +323,20 @@ app.post("/api/sync", async (_, res) => {
   } finally {
     syncing = false;
   }
+});
+app.get("/api/posts/:id/video/:index", async (req, res) => {
+  const row = db
+    .prepare("SELECT data FROM posts WHERE id = ?")
+    .get(req.params.id);
+  const url = xVideoUrl(
+    row ? JSON.parse(row.data as string) : undefined,
+    req.params.index,
+  );
+  if (!url) {
+    res.status(404).json({ error: "Video not found." });
+    return;
+  }
+  await streamXVideo(req, res, url);
 });
 app.patch("/api/posts/:id", (req, res) => {
   const p = posts().find((p) => p.id === req.params.id);

@@ -303,3 +303,52 @@ test("anonymous Instagram sync uses embeds, enriches video/Reels and respects pa
     else process.env.INSTAGRAM_USER_ID = old[1];
   }
 });
+test("collaboration details enrich only a listed public shortcode and retain the approved source", async () => {
+  const original = globalThis.fetch;
+  const old = [
+    process.env.INSTAGRAM_ACCESS_TOKEN,
+    process.env.INSTAGRAM_USER_ID,
+  ];
+  delete process.env.INSTAGRAM_ACCESS_TOKEN;
+  delete process.env.INSTAGRAM_USER_ID;
+  const base = {
+    ...album,
+    shortcode: "collab",
+    is_video: true,
+    edge_sidecar_to_children: undefined,
+    owner: { username: "test", is_private: false },
+  };
+  let detail = {
+    ...base,
+    owner: { username: "originalauthor", is_private: false },
+    video_url: video,
+  };
+  const html = (m: unknown) =>
+    `<script type="application/json">${JSON.stringify({ shortcode_media: m })}</script>`;
+  globalThis.fetch = async (input) =>
+    new Response(html(String(input).endsWith("/test/embed/") ? base : detail));
+  try {
+    const result = await syncInstagram("test", "c", ["video"]);
+    assert.equal(result.posts[0].videos?.[0].url, video);
+    assert.equal(result.posts[0].sourceUsername, "test");
+    detail = { ...detail, shortcode: "unrelated" };
+    assert.equal(
+      (await syncInstagram("test", "c", ["video"])).posts[0].videos?.length,
+      0,
+    );
+    detail = {
+      ...detail,
+      shortcode: "collab",
+      owner: { username: "originalauthor", is_private: true },
+    };
+    assert.equal(
+      (await syncInstagram("test", "c", ["video"])).posts[0].videos?.length,
+      0,
+    );
+  } finally {
+    globalThis.fetch = original;
+    ["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_USER_ID"].forEach((k, i) =>
+      old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i]),
+    );
+  }
+});
