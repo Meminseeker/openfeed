@@ -26,7 +26,7 @@ services:
           CMD,
           node,
           -e,
-          "fetch('http://127.0.0.1:3000/healthz',{headers:{Host:new URL(process.env.OPENFEED_PUBLIC_ORIGIN).host}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "require('node:http').get({host:'127.0.0.1',port:3000,path:'/healthz',headers:{host:new URL(process.env.OPENFEED_PUBLIC_ORIGIN).host}},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s
