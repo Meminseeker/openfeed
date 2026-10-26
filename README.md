@@ -21,6 +21,10 @@ npm start
 
 `npm start` serves the production build. Set `PORT` to change the default port. Run commands from the repository root. The SQLite database is stored in `data/openfeed.db`, ignored by Git. Back up the entire `data/` directory while the server is stopped.
 
+## Cloud deployment
+
+See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean sizing, HTTPS and password protection at `openfeed.meminseeker.com`, data migration, backups, and manual updates. The cloud setup is one shared workspace, including when friends have access.
+
 ## What works
 
 - Follow a public YouTube channel or X account by @handle or profile URL (YouTube channel IDs also work).
@@ -81,7 +85,7 @@ Feed shortcuts work while focus is outside the cross-origin YouTube frame. Insid
 
 Notes autosave after 600 ms and flush when switching content or closing. Writes are serialized per item; failed or pending drafts stay in the browser and are retried on reopening. The **Save now** action retries explicitly. Notes persist through refresh and server restart. **Add current timestamp** inserts a marker such as `[1:23]`; timestamp buttons below the notes seek back to that point. Notes have a 50,000-character limit.
 
-The app is designed for **one person on their own machine**. It has no login or multi-user isolation. Do not expose it publicly without adding authentication, TLS, and deployment hardening. The API rejects cross-origin browser requests.
+The app has no application login or multi-user isolation. Local runs listen on loopback by default. The provided cloud Compose setup adds HTTPS and proxy password protection; all authorized visitors still share one workspace. Follow [the deployment guide](docs/deployment.md) before exposing it. The API rejects unapproved hosts and cross-origin browser requests.
 
 ## Structure
 
