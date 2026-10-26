@@ -2,6 +2,7 @@ import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername } from "./x.ts";
 import express from "express";
+import { requestAllowed, validatePublicOrigin } from "./access.ts";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -48,17 +49,17 @@ function savePost(p: Post) {
 }
 const app = express();
 app.disable("x-powered-by");
+const publicOrigin = validatePublicOrigin(process.env.OPENFEED_PUBLIC_ORIGIN);
 app.use((req, res, next) => {
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(req.hostname)) {
-    res.status(403).json({ error: "Only local hosts are allowed." });
-    return;
-  }
-  const origin = req.headers.origin;
-  if (origin && origin !== `http://${req.headers.host}`) {
-    res.status(403).json({ error: "Cross-origin requests are disabled." });
+  if (!requestAllowed(req.headers.host, req.headers.origin, publicOrigin)) {
+    res.status(403).json({ error: "Host or origin is not allowed." });
     return;
   }
   next();
+});
+app.get("/healthz", (_, res) => {
+  db.prepare("SELECT 1").get();
+  res.json({ ok: true });
 });
 app.use(express.json({ limit: "100kb" }));
 app.get("/api/state", (_, res) =>
@@ -381,9 +382,19 @@ if (process.env.NODE_ENV === "production") {
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT || 3000);
-const server = app.listen(port, "127.0.0.1", () => {
+const server = app.listen(port, process.env.HOST || "127.0.0.1", () => {
   const address = server.address();
   console.log(
     `OpenFeed is ready at http://localhost:${typeof address === "object" && address ? address.port : port}`,
   );
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 25_000).unref();
+  });
+}
