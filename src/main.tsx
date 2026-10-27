@@ -693,7 +693,9 @@ function PostCard({
           <small
             title={
               p.publishedApproximate
-                ? "Approximate date from YouTube’s relative timestamp"
+                ? p.platform === "tiktok"
+                  ? "Approximate date from the TikTok video ID"
+                  : "Approximate date from YouTube’s relative timestamp"
                 : p.published
                   ? new Date(p.published).toLocaleString()
                   : undefined

@@ -113,6 +113,6 @@ On phones the viewer fills the screen, with larger controls and notes collapsed 
 
 ### TikTok
 
-Add TikTok directly or edit an existing creator's TikTok account using a username or HTTPS profile URL. Existing linked TikTok accounts participate in refresh automatically unless syncing is paused. Public profile JSON supplies recent videos; the viewer uses TikTok's [official embed player](https://developers.tiktok.com/docs/en/embed-player).
+Add TikTok directly or edit an existing creator's TikTok account using a username or HTTPS profile URL. Existing linked TikTok accounts participate in refresh automatically unless syncing is paused. The official creator embed supplies up to 10 recent videos (with profile JSON as a fallback); the viewer uses TikTok's [official embed player](https://developers.tiktok.com/docs/en/embed-player).
 
-TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.
+Embed video dates are estimated from their IDs because the embed omits publication timestamps. TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.

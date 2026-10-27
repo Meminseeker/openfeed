@@ -2,10 +2,35 @@
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
-  if (url.startsWith("https://www.tiktok.com/"))
+  if (url.startsWith("https://www.tiktok.com/embed/@")) {
+    const path = new URL(url).pathname;
     return new Response(
-      `<script type="application/json">${JSON.stringify({ items: [{ id: "7550000000000000001", author: { uniqueId: new URL(url).pathname.slice(2) }, desc: "TikTok fixture", createTime: Math.floor(Date.now() / 1000), video: {} }] })}</script>`,
+      `<script type="application/json">${JSON.stringify({
+        source: {
+          data: {
+            [path]: {
+              isReady: true,
+              isError: false,
+              userInfo: {
+                uniqueId: path.slice("/embed/@".length),
+                privateAccount: false,
+              },
+              videoList: [
+                {
+                  id: String(BigInt(Math.floor(Date.now() / 1000)) << 32n),
+                  authorUniqueId: path.slice("/embed/@".length),
+                  desc: "TikTok embed fixture",
+                  privateItem: false,
+                },
+              ],
+            },
+          },
+        },
+      })}</script>`,
     );
+  }
+  if (url.startsWith("https://www.tiktok.com/"))
+    return new Response("SlardarWAF");
   if (url.startsWith("https://www.instagram.com/"))
     return new Response(
       `<script type="application/json">${JSON.stringify({ data: { user: { username: new URL(url).pathname.split("/")[1], is_private: false, edge_owner_to_timeline_media: { edges: [{ node: { shortcode: "testAlbum", edge_media_to_caption: { edges: [{ node: { text: "Instagram test album" } }] }, edge_sidecar_to_children: { edges: [{ node: { display_url: "https://scontent.cdninstagram.com/one.jpg" } }, { node: { display_url: "https://scontent.cdninstagram.com/two.jpg" } }] } } }] } } } })}</script>`,
