@@ -21,6 +21,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
         platform: "youtube",
         username: "@test",
         channelId: "UCLRYyGAoqR26MpjAmbrG6oQ",
+        syncTypes: ["video", "short"],
       },
     ],
     avatar: "",
@@ -31,7 +32,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     title: "Test",
     url: "https://youtube.com/watch?v=test",
     kind: "video",
-    published: "2026-09-30T00:00:00Z",
+    published: new Date().toISOString(),
     read: false,
     saved: false,
   };
@@ -41,6 +42,18 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     c.id,
     JSON.stringify(p),
   );
+  for (const patch of [
+    { id: "expired" },
+    { id: "saved-old", saved: true },
+    { id: "noted-old", notes: "Keep this annotation" },
+  ]) {
+    const old = { ...p, published: "2000-01-01T00:00:00Z", ...patch };
+    db.prepare("INSERT INTO posts VALUES (?,?,?)").run(
+      old.id,
+      c.id,
+      JSON.stringify(old),
+    );
+  }
   db.close();
   let proc: ChildProcess;
   let base = "";
@@ -64,6 +77,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
             NODE_ENV: "production",
             PORT: "0",
             OPENFEED_DB: path,
+            OPENFEED_RETENTION_DAYS: "90",
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -101,6 +115,21 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
   };
   try {
     await start();
+    const initial = await call("state");
+    assert.ok(!initial.posts.some((p: any) => p.id === "expired"));
+    assert.ok(initial.posts.some((p: any) => p.id === "saved-old"));
+    assert.ok(initial.posts.some((p: any) => p.id === "noted-old"));
+    const tt = await call("creators", "POST", {
+      platform: "tiktok",
+      channel: "https://www.tiktok.com/@Dolubatarya",
+    });
+    await call("sync", "POST");
+    const ttState = await call("state");
+    assert.equal(
+      ttState.posts.find((p: any) => p.platform === "tiktok").creatorId,
+      tt.id,
+    );
+    await call(`creators/${tt.id}`, "DELETE");
     await call("creators/test-creator", "PATCH", {
       tags: [" Technology ", "Technology", "News"],
       accounts: [

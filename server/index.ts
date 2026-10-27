@@ -1,3 +1,5 @@
+import { syncTikTok, tiktokUsername } from "./tiktok.ts";
+import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername } from "./x.ts";
@@ -47,6 +49,15 @@ function savePost(p: Post) {
     JSON.stringify(p),
   );
 }
+const retention = retentionDays();
+function prunePosts() {
+  const remove = db.prepare("DELETE FROM posts WHERE id = ?");
+  for (const post of posts())
+    if (expiredPost(post, retention)) remove.run(post.id);
+}
+prunePosts();
+const cleanupTimer = setInterval(prunePosts, 60 * 60 * 1000);
+cleanupTimer.unref();
 const app = express();
 app.disable("x-powered-by");
 const publicOrigin = validatePublicOrigin(process.env.OPENFEED_PUBLIC_ORIGIN);
@@ -67,7 +78,7 @@ app.get("/api/state", (_, res) =>
 );
 app.post("/api/creators", async (req, res, next) => {
   try {
-    const platform = ["x", "instagram"].includes(req.body.platform)
+    const platform = ["x", "instagram", "tiktok"].includes(req.body.platform)
       ? req.body.platform
       : "youtube";
     const input = String(req.body.channel || "");
@@ -76,9 +87,11 @@ app.post("/api/creators", async (req, res, next) => {
     const username =
       platform === "x"
         ? xUsername(input)
-        : platform === "instagram"
-          ? instagramUsername(input)
-          : input;
+        : platform === "tiktok"
+          ? tiktokUsername(input)
+          : platform === "instagram"
+            ? instagramUsername(input)
+            : input;
     if (
       creators().some((c) =>
         c.accounts.some((a) =>
@@ -87,7 +100,9 @@ app.post("/api/creators", async (req, res, next) => {
             : a.platform === platform &&
               (platform === "x"
                 ? xUsername(a.username)
-                : instagramUsername(a.username)
+                : platform === "tiktok"
+                  ? tiktokUsername(a.username)
+                  : instagramUsername(a.username)
               ).toLowerCase() === username.toLowerCase(),
         ),
       )
@@ -166,11 +181,16 @@ app.patch("/api/creators/:id", async (req, res) => {
     }
     for (const a of req.body.accounts.filter(
       (a: any) =>
-        ["x", "instagram"].includes(a.platform) &&
+        ["x", "instagram", "tiktok"].includes(a.platform) &&
         typeof a.username === "string" &&
         a.username.trim(),
     )) {
-      const normalize = a.platform === "x" ? xUsername : instagramUsername;
+      const normalize =
+        a.platform === "x"
+          ? xUsername
+          : a.platform === "tiktok"
+            ? tiktokUsername
+            : instagramUsername;
       const username = normalize(a.username);
       if (
         creators().some(
@@ -199,14 +219,18 @@ app.patch("/api/creators/:id", async (req, res) => {
         ...c.accounts.find(
           (old) =>
             old.platform === a.platform &&
-            (["x", "instagram"].includes(a.platform)
+            (["x", "instagram", "tiktok"].includes(a.platform)
               ? (a.platform === "x"
                   ? xUsername(old.username)
-                  : instagramUsername(old.username)
+                  : a.platform === "tiktok"
+                    ? tiktokUsername(old.username)
+                    : instagramUsername(old.username)
                 ).toLowerCase() ===
                 (a.platform === "x"
                   ? xUsername(a.username)
-                  : instagramUsername(a.username)
+                  : a.platform === "tiktok"
+                    ? tiktokUsername(a.username)
+                    : instagramUsername(a.username)
                 ).toLowerCase()
               : old.username === a.username.trim()),
         ),
@@ -214,9 +238,11 @@ app.patch("/api/creators/:id", async (req, res) => {
         username:
           a.platform === "x"
             ? xUsername(a.username)
-            : a.platform === "instagram"
-              ? instagramUsername(a.username)
-              : a.username.trim().slice(0, 100),
+            : a.platform === "tiktok"
+              ? tiktokUsername(a.username)
+              : a.platform === "instagram"
+                ? instagramUsername(a.username)
+                : a.username.trim().slice(0, 100),
         syncTypes:
           a.syncTypes !== undefined
             ? validSyncTypes(a.platform, a.syncTypes)
@@ -242,7 +268,7 @@ app.post("/api/sync", async (_, res) => {
   try {
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
-        ["youtube", "x", "instagram"].includes(a.platform),
+        ["youtube", "x", "instagram", "tiktok"].includes(a.platform),
       )) {
         if (!enabledTypes(account).length) continue;
         const sameSource = (a: Creator["accounts"][number]) =>
@@ -252,19 +278,21 @@ app.post("/api/sync", async (_, res) => {
             : a.username === account.username);
         try {
           const result =
-            account.platform === "x"
-              ? await syncX(account.username, c.id, account.xSinceId)
-              : account.platform === "instagram"
-                ? await syncInstagram(
-                    account.username,
-                    c.id,
-                    enabledTypes(account),
-                  )
-                : await syncChannel(
-                    account.channelId!,
-                    c.id,
-                    enabledTypes(account) as Kind[],
-                  );
+            account.platform === "tiktok"
+              ? await syncTikTok(account.username, c.id)
+              : account.platform === "x"
+                ? await syncX(account.username, c.id, account.xSinceId)
+                : account.platform === "instagram"
+                  ? await syncInstagram(
+                      account.username,
+                      c.id,
+                      enabledTypes(account),
+                    )
+                  : await syncChannel(
+                      account.channelId!,
+                      c.id,
+                      enabledTypes(account) as Kind[],
+                    );
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (!current || !source || !enabledTypes(source).length) continue;
@@ -274,7 +302,7 @@ app.post("/api/sync", async (_, res) => {
             const prev = old.get(p.id);
             const keepDate =
               !!prev?.published && (p.publishedApproximate || !p.published);
-            savePost({
+            const updated: Post = {
               ...p,
               published: keepDate ? prev!.published : p.published,
               publishedApproximate: keepDate
@@ -283,7 +311,8 @@ app.post("/api/sync", async (_, res) => {
               read: prev?.read || false,
               saved: prev?.saved || false,
               notes: prev?.notes || "",
-            });
+            };
+            if (!expiredPost(updated, retention)) savePost(updated);
           }
           if ("newestId" in result && typeof result.newestId === "string")
             source.xSinceId = result.newestId;
@@ -296,7 +325,7 @@ app.post("/api/sync", async (_, res) => {
             current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : "YouTube"}: ${a.error}`
+                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : a.platform === "tiktok" ? "TikTok" : "YouTube"}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
@@ -310,7 +339,7 @@ app.post("/api/sync", async (_, res) => {
             current.error = current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : "YouTube"}: ${a.error}`
+                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : a.platform === "tiktok" ? "TikTok" : "YouTube"}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
@@ -320,6 +349,7 @@ app.post("/api/sync", async (_, res) => {
         }
       }
     }
+    prunePosts();
     res.json({ creators: creators(), posts: posts() });
   } finally {
     syncing = false;
@@ -391,6 +421,7 @@ const server = app.listen(port, process.env.HOST || "127.0.0.1", () => {
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
+    clearInterval(cleanupTimer);
     server.close(() => {
       db.close();
       process.exit(0);

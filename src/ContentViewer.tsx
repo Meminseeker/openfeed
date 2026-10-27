@@ -1,6 +1,8 @@
+import { contentSwipe } from "./viewer-swipe";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
+  NotebookPen,
   ChevronLeft,
   ChevronRight,
   ArrowUp,
@@ -42,6 +44,8 @@ export function ContentViewer({
     native = useRef<HTMLVideoElement>(null),
     player = useRef<YouTubePlayer | undefined>(undefined),
     touch = useRef<{ x: number; y: number } | undefined>(undefined);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const contentTouch = useRef<{ x: number; y: number } | undefined>(undefined);
   const [imageIndex, setImageIndex] = useState(0),
     [ready, setReady] = useState(false),
     [playing, setPlaying] = useState(false),
@@ -56,6 +60,7 @@ export function ContentViewer({
     post.images !== undefined ? post.images : post.image ? [post.image] : [];
   const [videoIndex, setVideoIndex] = useState(0);
   const videoId =
+    post.platform === "tiktok" ||
     post.platform === "x" ||
     post.platform === "instagram" ||
     post.kind === "post"
@@ -76,6 +81,7 @@ export function ContentViewer({
     };
   }, []);
   useEffect(() => {
+    contentTouch.current = undefined;
     setImageIndex(0);
     setVideoIndex(0);
     setPosition(0);
@@ -290,7 +296,33 @@ export function ContentViewer({
       }}
     >
       <section
-        className="content-viewer"
+        className={`content-viewer ${notesOpen ? "notes-open" : ""}`}
+        onTouchStart={(e) => {
+          contentTouch.current = undefined;
+          if (
+            e.touches.length !== 1 ||
+            (e.target as HTMLElement).closest(
+              "button, a, input, textarea, select, video, iframe, .image-stage, .image-thumbs, .notes-panel",
+            )
+          )
+            return;
+          contentTouch.current = {
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY,
+          };
+        }}
+        onTouchCancel={() => {
+          contentTouch.current = undefined;
+        }}
+        onTouchEnd={(e) => {
+          const start = contentTouch.current;
+          contentTouch.current = undefined;
+          if (!start) return;
+          const dx = e.changedTouches[0].clientX - start.x;
+          const dy = e.changedTouches[0].clientY - start.y;
+          const delta = contentSwipe(dx, dy);
+          if (delta) navigate(delta);
+        }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="viewer-title"
@@ -309,7 +341,9 @@ export function ContentViewer({
                   ? "X"
                   : post.platform === "instagram"
                     ? "Instagram"
-                    : "YouTube"}{" "}
+                    : post.platform === "tiktok"
+                      ? "TikTok"
+                      : "YouTube"}{" "}
                 ·{" "}
                 {post.kind === "post"
                   ? post.repost
@@ -342,6 +376,22 @@ export function ContentViewer({
             <h2 id="viewer-title" tabIndex={0}>
               {post.title}
             </h2>
+            {post.platform === "tiktok" && /^\d+$/.test(post.videoId || "") && (
+              <>
+                <div className="video-stage short-stage tiktok-stage">
+                  <iframe
+                    key={post.id}
+                    title={post.title}
+                    src={`https://www.tiktok.com/player/v1/${post.videoId}?autoplay=0&rel=0`}
+                    allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+                <p className="player-hint">
+                  If TikTok playback is unavailable, use Open source.
+                </p>
+              </>
+            )}
             {isVideo ? (
               <>
                 <div
@@ -459,7 +509,8 @@ export function ContentViewer({
                 )}
               </>
             ) : null}
-            {images.length > 0 &&
+            {post.platform !== "tiktok" &&
+            images.length > 0 &&
             (!isVideo || (!!post.platform && post.platform !== "youtube")) ? (
               <div className="image-viewer">
                 <div
@@ -553,6 +604,15 @@ export function ContentViewer({
                   Open source to watch it.
                 </p>
               )}
+            <button
+              className="mobile-notes-toggle"
+              aria-expanded={notesOpen}
+              aria-controls="viewer-notes"
+              onClick={() => setNotesOpen((open) => !open)}
+            >
+              <NotebookPen size={18} /> {notesOpen ? "Hide notes" : "Notes"}
+              {post.notes?.trim() ? " •" : ""}
+            </button>
             {post.text && <div className="viewer-text">{post.text}</div>}
             <div className="viewer-tags">
               {creator.tags.map((t) => (
@@ -560,22 +620,27 @@ export function ContentViewer({
               ))}
             </div>
           </div>
-          <Notes
-            key={post.id}
-            post={post}
-            onSaved={onNotesSaved}
-            currentTime={
-              isVideo && ready
-                ? () =>
-                    native.current?.currentTime ||
-                    player.current?.getCurrentTime() ||
-                    0
-                : undefined
-            }
-            seek={isVideo && ready ? seek : undefined}
-          />
+          <div id="viewer-notes" className="viewer-notes">
+            <Notes
+              key={post.id}
+              post={post}
+              onSaved={onNotesSaved}
+              currentTime={
+                isVideo && ready
+                  ? () =>
+                      native.current?.currentTime ||
+                      player.current?.getCurrentTime() ||
+                      0
+                  : undefined
+              }
+              seek={isVideo && ready ? seek : undefined}
+            />
+          </div>
         </div>
         <footer className="viewer-footer">
+          <span className="swipe-hint">
+            Swipe left / right here to change content
+          </span>
           <div className="content-navigation">
             <button
               aria-label="Previous content"

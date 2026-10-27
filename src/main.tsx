@@ -1,3 +1,4 @@
+import { relativeTime } from "./relative-time";
 import {
   contentFilters,
   contentFilterKey,
@@ -10,6 +11,7 @@ import {
   Rss,
   Users,
   Bookmark,
+  NotebookPen,
   Plus,
   ArrowUpRight,
   RefreshCw,
@@ -35,6 +37,11 @@ import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
 function App() {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 60000);
+    return () => clearInterval(timer);
+  }, []);
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
     [page, setPage] = useState("feed"),
     [tag, setTag] = useState("All topics"),
@@ -110,6 +117,7 @@ function App() {
       return (
         c &&
         (page !== "saved" || p.saved) &&
+        (page !== "noted" || !!p.notes?.trim()) &&
         (tag === "All topics" || c.tags.includes(tag)) &&
         (!types.length || types.includes(contentFilterKey(p))) &&
         (!creatorFilter.length || creatorFilter.includes(c.id)) &&
@@ -163,6 +171,7 @@ function App() {
             ["feed", Rss, "Your feed"],
             ["creators", Users, "Creators"],
             ["saved", Bookmark, "Saved for later"],
+            ["noted", NotebookPen, "Noted down"],
           ].map(([id, Icon, label]) => (
             <button
               key={id as string}
@@ -244,7 +253,9 @@ function App() {
                 ? "Creators"
                 : page === "saved"
                   ? "Saved for later"
-                  : "Your feed"}
+                  : page === "noted"
+                    ? "Noted down"
+                    : "Your feed"}
             </strong>
           </div>
           <div className="header-right">
@@ -266,16 +277,20 @@ function App() {
                   ? "Good people. One place."
                   : page === "saved"
                     ? "For a quieter moment."
-                    : tag === "All topics"
-                      ? "A feed that feels like yours."
-                      : `${tag}, on your terms.`}
+                    : page === "noted"
+                      ? "Noted down."
+                      : tag === "All topics"
+                        ? "A feed that feels like yours."
+                        : `${tag}, on your terms.`}
               </h1>
               <p>
                 {page === "creators"
                   ? "Connect the accounts. Follow the person."
                   : page === "saved"
                     ? "The things you wanted to come back to."
-                    : "Stay in the loop with the people you follow. Leave the noise behind."}
+                    : page === "noted"
+                      ? "The content you have written notes on."
+                      : "Stay in the loop with the people you follow. Leave the noise behind."}
               </p>
             </div>
             <button
@@ -303,9 +318,7 @@ function App() {
                 <h2>
                   Your creators <span>{state.creators.length}</span>
                 </h2>
-                <span>
-                  YouTube, X & Instagram are live · More platforms soon
-                </span>
+                <span>YouTube, X, Instagram & TikTok</span>
               </div>
               <div className="creator-grid">
                 {state.creators.map((c) => (
@@ -343,7 +356,7 @@ function App() {
               {!state.creators.length && !loading && (
                 <Empty
                   title="Start with someone you love following."
-                  text="Add a YouTube, X or Instagram creator, give them a few topics, and make this space your own."
+                  text="Add a YouTube, X, Instagram or TikTok creator, give them a few topics, and make this space your own."
                   action={() => setModal(true)}
                 />
               )}
@@ -479,7 +492,7 @@ function App() {
               <div className="feed-info">
                 <span>
                   <span className="live-dot" />
-                  YouTube + X + Instagram{" "}
+                  Your sources{" "}
                   <span className="muted">
                     · Chronological · {visible.length} posts
                   </span>
@@ -571,9 +584,9 @@ function App() {
               )}
               <div className="source-note">
                 Public content only. YouTube uploads and community posts, plus
-                available X and Instagram posts. X public snapshots can omit
-                recent posts. ≈ Approximate date; undated posts appear last. No
-                ads or recommendations added by OpenFeed.
+                available X, Instagram and TikTok posts. X public snapshots can
+                omit recent posts. ≈ Approximate date; undated posts appear
+                last. No ads or recommendations added by OpenFeed.
               </div>
             </>
           )}
@@ -681,21 +694,13 @@ function PostCard({
             title={
               p.publishedApproximate
                 ? "Approximate date from YouTube’s relative timestamp"
-                : undefined
+                : p.published
+                  ? new Date(p.published).toLocaleString()
+                  : undefined
             }
           >
             {p.publishedApproximate && p.published ? "≈ " : ""}
-            {p.published
-              ? new Date(p.published).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year:
-                    new Date(p.published).getFullYear() !==
-                    new Date().getFullYear()
-                      ? "numeric"
-                      : undefined,
-                })
-              : "Date unavailable"}{" "}
+            {relativeTime(p.published)}{" "}
             <span>
               ·{" "}
               {p.platform === "x"
@@ -704,7 +709,9 @@ function PostCard({
                   : "X"
                 : p.platform === "instagram"
                   ? "Instagram"
-                  : "YouTube"}
+                  : p.platform === "tiktok"
+                    ? "TikTok"
+                    : "YouTube"}
             </span>
           </small>
         </div>
@@ -929,11 +936,13 @@ function CreatorModal({
                       platform: e.target.value,
                       username: "",
                       syncTypes:
-                        e.target.value === "x"
-                          ? ["post"]
-                          : e.target.value === "instagram"
-                            ? ["post", "video", "short"]
-                            : ["video", "short", "community"],
+                        e.target.value === "tiktok"
+                          ? ["video"]
+                          : e.target.value === "x"
+                            ? ["post"]
+                            : e.target.value === "instagram"
+                              ? ["post", "video", "short"]
+                              : ["video", "short", "community"],
                     },
                   ]);
                 }}
@@ -941,12 +950,15 @@ function CreatorModal({
                 <option value="youtube">YouTube</option>
                 <option value="x">X (Twitter)</option>
                 <option value="instagram">Instagram</option>
+                <option value="tiktok">TikTok</option>
               </select>
               {platform === "x"
                 ? "X account"
                 : platform === "instagram"
                   ? "Instagram account"
-                  : "YouTube channel"}
+                  : platform === "tiktok"
+                    ? "TikTok account"
+                    : "YouTube channel"}
               <input
                 autoFocus
                 required
@@ -955,14 +967,16 @@ function CreatorModal({
                     ? "@username or an X profile URL"
                     : platform === "instagram"
                       ? "@username or an Instagram profile URL"
-                      : "@mkbhd or a YouTube channel URL"
+                      : platform === "tiktok"
+                        ? "@username or a TikTok profile URL"
+                        : "@mkbhd or a YouTube channel URL"
                 }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
               />
               <small>
-                {platform === "instagram"
-                  ? "Public accounts only. Instagram may block access; see source details below."
+                {platform === "instagram" || platform === "tiktok"
+                  ? "Public accounts only. The platform may block access; see source details below."
                   : "Public channels only. No sign-in or API key needed."}
               </small>
             </label>
@@ -1132,7 +1146,7 @@ function CreatorModal({
           </div>
           <details>
             <summary>
-              Other accounts <span>Save now, sync in a future phase</span>
+              Other accounts <span>TikTok · Patreon</span>
             </summary>
             {["tiktok", "patreon"].map((platform) => {
               const account = accounts.find((a) => a.platform === platform) || {
@@ -1163,7 +1177,9 @@ function CreatorModal({
                         change={(syncTypes) => update({ syncTypes })}
                       />
                       <small>
-                        Preferences saved · Sync integration coming later
+                        {platform === "tiktok"
+                          ? "Public videos sync on refresh. TikTok may restrict access."
+                          : "Preferences saved · Sync integration coming later"}
                       </small>
                     </>
                   )}

@@ -42,7 +42,7 @@ export interface Post {
   image?: string;
   images?: string[];
   videoId?: string;
-  platform?: "youtube" | "x" | "instagram";
+  platform?: "youtube" | "x" | "instagram" | "tiktok";
   sourceUsername?: string;
   videos?: { url: string; poster?: string; loop?: boolean }[];
   repost?: boolean;

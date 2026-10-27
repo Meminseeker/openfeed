@@ -28,7 +28,7 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 ## What works
 
 - Follow a public YouTube channel or X account by @handle or profile URL (YouTube channel IDs also work).
-- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok and Patreon remain metadata only.
+- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok supports public video import; Patreon remains metadata only.
 - Mix videos, Shorts, and creator-authored community posts in one feed, including multi-image albums, alongside X text, photo, video and GIF posts.
 - Set content types to sync independently on each creator/source. Empty selection pauses that source. Existing posts and notes remain available. Other-platform preferences are stored until those integrations are implemented.
 - Open posts in a modal with video playback, image carousel, previous/next navigation, and separate copy/open-source actions.
@@ -100,3 +100,19 @@ The app has no application login or multi-user isolation. Local runs listen on l
 - `tests/youtube.test.ts`: channel validation, page parsing, source isolation
 
 The sample channels @dolubatarya and @yatirim101 were used for live validation. Local test data is not committed.
+
+### Feed retention, notes and mobile viewing
+
+Development takes place on `dev`; `main` is reserved for explicitly requested releases/merges.
+
+The **Noted down** sidebar category shows posts with nonempty notes. Feed dates use elapsed time and update every minute; hover over a date for its exact timestamp.
+
+Unsaved posts without notes are removed after **90 days**, at startup, hourly, and after refresh. Set `OPENFEED_RETENTION_DAYS` to a positive number to change this window. Saved posts, annotated posts, and posts with unknown dates are retained. Refresh skips expired items so old source posts do not refill the database.
+
+On phones the viewer fills the screen, with larger controls and notes collapsed by default. Tap **Notes** below the media to expand them. Swipe left/right on the title, text, or footer to move between content items. Image albums retain their own image swipe gesture; embedded players handle touches themselves. Previous/Next buttons remain available below the content.
+
+### TikTok
+
+Add TikTok directly or edit an existing creator's TikTok account using a username or HTTPS profile URL. Existing linked TikTok accounts participate in refresh automatically unless syncing is paused. Public profile JSON supplies recent videos; the viewer uses TikTok's [official embed player](https://developers.tiktok.com/docs/en/embed-player).
+
+TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.
