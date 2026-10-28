@@ -1,8 +1,8 @@
 export type Kind = "video" | "short" | "community" | "post";
-export type SyncType = Kind | "post";
+export type SyncType = Kind | "repost";
 export const sourceTypes: Record<string, SyncType[]> = {
   youtube: ["video", "short", "community"],
-  x: ["post"],
+  x: ["post", "repost"],
   instagram: ["post", "video", "short"],
   tiktok: ["video"],
   patreon: ["post"],
@@ -12,9 +12,14 @@ export const syncLabels: Record<SyncType, string> = {
   short: "Shorts",
   community: "Community posts",
   post: "Posts",
+  repost: "Reposts",
 };
 export function enabledTypes(account: Account): SyncType[] {
-  return account.syncTypes ?? sourceTypes[account.platform] ?? [];
+  return (
+    account.syncTypes ??
+    (account.platform === "x" ? ["post"] : sourceTypes[account.platform]) ??
+    []
+  );
 }
 export interface Account {
   platform: string;
@@ -52,6 +57,9 @@ export interface Post {
   published: string;
   publishedApproximate?: boolean;
   duration?: string;
+  removed?: boolean;
+  textTruncated?: boolean;
+  textExpanded?: boolean;
   read: boolean;
   saved: boolean;
 }

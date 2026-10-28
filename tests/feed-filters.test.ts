@@ -41,3 +41,41 @@ test("topic creator list and multiple selection discard unavailable creators aft
   );
   assert.equal(topicCreators(creators, "All topics").length, 3);
 });
+
+test("all creators are checked by default and an empty explicit selection means none", async () => {
+  const { selectedCreators, inTimeRange } =
+    await import("../src/feed-filters.ts");
+  const creators = [{ id: "a" }, { id: "b" }] as Creator[];
+  assert.deepEqual(selectedCreators(null, creators), ["a", "b"]);
+  assert.deepEqual(selectedCreators(["b"], creators), ["b"]);
+  assert.deepEqual(selectedCreators([], creators), []);
+  const now = Date.parse("2026-10-28T12:00:00Z");
+  const post = { published: "2026-10-26T12:00:00Z" } as Post;
+  assert.equal(inTimeRange(post, "1d", now), false);
+  assert.equal(inTimeRange(post, "2d", now), true);
+  assert.equal(inTimeRange(post, "1w+", now), false);
+  assert.equal(
+    inTimeRange({ published: "2026-10-20T12:00:00Z" } as Post, "1w+", now),
+    true,
+  );
+  assert.equal(inTimeRange({ published: "" } as Post, "1w", now), false);
+  assert.equal(inTimeRange({ published: "" } as Post, "All", now), true);
+});
+test("platform labels distinguish Reels, Shorts and reposts; X defaults exclude reposts", async () => {
+  const { postLabel } = await import("../src/post-label.ts");
+  const { enabledTypes } = await import("../src/types.ts");
+  assert.equal(
+    postLabel({ platform: "instagram", kind: "short" } as Post),
+    "Instagram Reel",
+  );
+  assert.equal(postLabel({ kind: "short" } as Post), "YouTube Shorts");
+  assert.equal(
+    postLabel({ platform: "x", kind: "post", repost: true } as Post),
+    "X Repost",
+  );
+  assert.deepEqual(enabledTypes({ platform: "x", username: "test" }), ["post"]);
+  assert.deepEqual(
+    enabledTypes({ platform: "x", username: "test", syncTypes: ["repost"] }),
+    ["repost"],
+  );
+});

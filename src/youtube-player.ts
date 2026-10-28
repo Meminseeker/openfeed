@@ -5,6 +5,8 @@ export interface YouTubePlayer {
   getPlayerState(): number;
   getCurrentTime(): number;
   getDuration(): number;
+  setPlaybackRate(rate: number): void;
+  getAvailablePlaybackRates(): number[];
   seekTo(seconds: number, ahead: boolean): void;
   getIframe(): HTMLIFrameElement;
   loadModule?(module: string): void;

@@ -116,3 +116,17 @@ On phones the viewer fills the screen, with larger controls and notes collapsed 
 Add TikTok directly or edit an existing creator's TikTok account using a username or HTTPS profile URL. Existing linked TikTok accounts participate in refresh automatically unless syncing is paused. The official creator embed supplies up to 10 recent videos (with profile JSON as a fallback); the viewer uses TikTok's [official embed player](https://developers.tiktok.com/docs/en/embed-player).
 
 Embed video dates are estimated from their IDs because the embed omits publication timestamps. TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.
+
+### Install on your phone
+
+Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On iPhone/iPad use Safari → Share → Add to Home Screen. The app opens in its own window with an OpenFeed icon. Installation does not remove the site's password protection. Network access is required for the feed, syncing, media and saving notes; the offline page explains how to reconnect. The service worker caches only that generic offline page, never feed data or notes. Local note drafts retain their existing behavior.
+
+### Feed and playback controls
+
+- Creator checkboxes start checked. **All creators in this topic** checks everyone; uncheck one or more to exclude them. Unchecking everyone shows no posts.
+- Time buttons show items within the last 1, 2, 3, 5 or 7 days. **1w+** means older than seven days; **All** includes undated content. Topic badges show unread items within the selected time window.
+- Remove content with its trash button. **Undo** restores it with saved status and notes intact. A hidden record is retained so refreshing does not bring removed items back.
+- X source settings distinguish posts and reposts. New accounts sync posts only. Changing these choices affects subsequent imports and resets the X API cursor so newly enabled types can be fetched.
+- Long X posts are repaired from their canonical public X page when opened. If unavailable, the viewer identifies the shortened preview and links to the original.
+- Image and video fullscreen buttons expand the media; browsers without the Fullscreen API use an expanded in-app view. Playback-speed buttons use the rates supported by the player.
+- TikTok prefers the native video URL supplied by the public embed, enabling speed and seek controls. If that URL expires or fails, the official iframe is used with play/pause and seek controls. TikTok's documented iframe API does not expose playback speed, so speed buttons are unavailable in that fallback.

@@ -1,7 +1,12 @@
+import { postLabel } from "./post-label";
+import { relativeTime } from "./relative-time";
 import { contentSwipe } from "./viewer-swipe";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
+  Maximize,
+  Minimize,
+  Trash2,
   NotebookPen,
   ChevronLeft,
   ChevronRight,
@@ -29,6 +34,7 @@ export function ContentViewer({
   navigate,
   onNotesSaved,
   onSave,
+  onRemove,
 }: {
   post: Post;
   creator: Creator;
@@ -38,12 +44,20 @@ export function ContentViewer({
   navigate: (delta: number) => void;
   onNotesSaved: (id: string, notes: string) => void;
   onSave: () => void;
+  onRemove: () => void;
 }) {
   const dialog = useRef<HTMLElement>(null),
     host = useRef<HTMLDivElement>(null),
     native = useRef<HTMLVideoElement>(null),
     player = useRef<YouTubePlayer | undefined>(undefined),
     touch = useRef<{ x: number; y: number } | undefined>(undefined);
+  const videoStage = useRef<HTMLDivElement>(null);
+  const imageStage = useRef<HTMLDivElement>(null);
+  const tikTok = useRef<HTMLIFrameElement>(null);
+  const [embedFallback, setEmbedFallback] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [rates, setRates] = useState<number[]>([0.5, 0.75, 1, 1.25, 1.5, 2]);
+  const [expanded, setExpanded] = useState<"video" | "image" | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const contentTouch = useRef<{ x: number; y: number } | undefined>(undefined);
   const [imageIndex, setImageIndex] = useState(0),
@@ -68,8 +82,81 @@ export function ContentViewer({
       : post.kind === "community"
         ? post.videoId
         : post.id;
-  const nativeVideo = post.videos?.[videoIndex];
-  const isVideo = !!videoId || !!nativeVideo;
+  const nativeVideo = embedFallback ? undefined : post.videos?.[videoIndex];
+  const isTikTok =
+    post.platform === "tiktok" &&
+    !nativeVideo &&
+    /^\d+$/.test(post.videoId || "");
+  const isVideo = !!videoId || !!nativeVideo || isTikTok;
+  const messageTikTok = useCallback((type: string, value?: number) => {
+    tikTok.current?.contentWindow?.postMessage(
+      { type, value, "x-tiktok-player": true },
+      "https://www.tiktok.com",
+    );
+  }, []);
+  const fullscreen = async (type: "video" | "image") => {
+    if (expanded) {
+      setExpanded(null);
+      if (document.fullscreenElement)
+        await document.exitFullscreen().catch(() => {});
+      return;
+    }
+    const element = type === "video" ? videoStage.current : imageStage.current;
+    setExpanded(type);
+    try {
+      await element?.requestFullscreen?.();
+    } catch {
+      /* Expanded view remains available on iOS. */
+    }
+  };
+  useEffect(() => {
+    const changed = () => {
+      if (!document.fullscreenElement) setExpanded(null);
+    };
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
+  useEffect(() => {
+    if (!isTikTok) return;
+    const receive = (event: MessageEvent) => {
+      if (
+        event.origin !== "https://www.tiktok.com" ||
+        event.source !== tikTok.current?.contentWindow ||
+        !event.data?.["x-tiktok-player"]
+      )
+        return;
+      const { type, value } = event.data;
+      if (type === "onPlayerReady") setReady(true);
+      if (type === "onStateChange") {
+        setPlaying(value === 1);
+        setReady(true);
+      }
+      if (
+        type === "onCurrentTime" &&
+        Number.isFinite(value?.currentTime) &&
+        Number.isFinite(value?.duration)
+      ) {
+        setPosition(value.currentTime);
+        setDuration(value.duration);
+      }
+      if (type === "onPlayerError")
+        setError(
+          "TikTok could not play this video. Try again or open the source.",
+        );
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [isTikTok, post.id]);
+  useEffect(() => {
+    setEmbedFallback(false);
+    setExpanded(null);
+  }, [post.id]);
+  const changeSpeed = (rate: number) => {
+    if (native.current) {
+      native.current.playbackRate = rate;
+      setSpeed(native.current.playbackRate);
+    } else if (player.current) player.current.setPlaybackRate(rate);
+  };
   useEffect(() => {
     const focus = document.activeElement as HTMLElement | null,
       overflow = document.body.style.overflow;
@@ -84,6 +171,8 @@ export function ContentViewer({
     contentTouch.current = undefined;
     setImageIndex(0);
     setVideoIndex(0);
+    setSpeed(1);
+    setRates([0.5, 0.75, 1, 1.25, 1.5, 2]);
     setPosition(0);
     setDuration(0);
     setFailedImage(false);
@@ -108,6 +197,7 @@ export function ContentViewer({
             playsinline: 1,
             rel: 0,
             autoplay: 0,
+            fs: 1,
           },
           events: {
             onReady: (event: { target: YouTubePlayer }) => {
@@ -115,12 +205,18 @@ export function ContentViewer({
               player.current = event.target;
               const iframe = event.target.getIframe();
               iframe.title = post.title;
+              iframe.allowFullscreen = true;
+              iframe.allow =
+                "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen";
+              setRates(event.target.getAvailablePlaybackRates());
               iframe.setAttribute(
                 "referrerpolicy",
                 "strict-origin-when-cross-origin",
               );
               setReady(true);
             },
+            onPlaybackRateChange: (event: { data: number }) =>
+              setSpeed(event.data),
             onStateChange: (event: { data: number }) => {
               if (!cancelled) setPlaying(event.data === 1);
             },
@@ -147,7 +243,7 @@ export function ContentViewer({
     };
   }, [post.id, videoId, retry]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || isTikTok) return;
     const tick = () => {
       if (native.current) {
         setPosition(native.current.currentTime || 0);
@@ -160,9 +256,13 @@ export function ContentViewer({
     tick();
     const timer = setInterval(tick, 500);
     return () => clearInterval(timer);
-  }, [ready]);
+  }, [ready, isTikTok]);
   const seek = useCallback(
     (seconds: number) => {
+      if (isTikTok) {
+        messageTikTok("seekTo", seekPosition(0, seconds, duration));
+        return;
+      }
       if (native.current && ready)
         native.current.currentTime = seekPosition(
           0,
@@ -172,10 +272,14 @@ export function ContentViewer({
       else if (player.current && ready)
         player.current.seekTo(Math.max(0, seconds), true);
     },
-    [ready],
+    [ready, isTikTok, duration, messageTikTok],
   );
   const skip = useCallback(
     (delta: number) => {
+      if (isTikTok) {
+        messageTikTok("seekTo", seekPosition(position, delta, duration));
+        return;
+      }
       if (native.current && ready) {
         native.current.currentTime = seekPosition(
           native.current.currentTime,
@@ -191,9 +295,13 @@ export function ContentViewer({
           true,
         );
     },
-    [ready],
+    [ready, isTikTok, position, duration, messageTikTok],
   );
   const togglePlay = useCallback(() => {
+    if (isTikTok) {
+      messageTikTok(playing ? "pause" : "play");
+      return;
+    }
     if (native.current && ready) {
       if (native.current.paused)
         void native.current
@@ -207,7 +315,7 @@ export function ContentViewer({
       if (p.getPlayerState() === 1) p.pauseVideo();
       else p.playVideo();
     }
-  }, [ready]);
+  }, [ready, isTikTok, playing, messageTikTok]);
   const toggleCaptions = useCallback(() => {
     if (native.current) {
       const tracks = Array.from(native.current.textTracks);
@@ -256,7 +364,12 @@ export function ContentViewer({
       if (action) {
         if (e.key === " " && target?.closest("button,a,summary")) return;
         e.preventDefault();
-        if (action === "close") close();
+        if (action === "close") {
+          if (expanded) {
+            setExpanded(null);
+            if (document.fullscreenElement) void document.exitFullscreen();
+          } else close();
+        }
         if (action === "previous") navigate(-1);
         if (action === "next") navigate(1);
         if (action === "back") isVideo ? skip(-5) : slide(-1);
@@ -287,7 +400,16 @@ export function ContentViewer({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [close, navigate, isVideo, skip, slide, togglePlay, toggleCaptions]);
+  }, [
+    close,
+    navigate,
+    isVideo,
+    skip,
+    slide,
+    togglePlay,
+    toggleCaptions,
+    expanded,
+  ]);
   return (
     <div
       className="viewer-overlay"
@@ -336,24 +458,15 @@ export function ContentViewer({
             )}
             <div>
               <strong>{creator.name}</strong>
-              <small>
-                {post.platform === "x"
-                  ? "X"
-                  : post.platform === "instagram"
-                    ? "Instagram"
-                    : post.platform === "tiktok"
-                      ? "TikTok"
-                      : "YouTube"}{" "}
-                ·{" "}
-                {post.kind === "post"
-                  ? post.repost
-                    ? "Repost"
-                    : "Post"
-                  : post.kind === "community"
-                    ? "Community post"
-                    : post.kind === "short"
-                      ? "Short"
-                      : "Video"}
+              <small
+                title={
+                  post.published
+                    ? new Date(post.published).toLocaleString()
+                    : undefined
+                }
+              >
+                {postLabel(post)} · {post.publishedApproximate ? "≈ " : ""}
+                {relativeTime(post.published)}
               </small>
             </div>
           </div>
@@ -366,6 +479,9 @@ export function ContentViewer({
             >
               <Bookmark size={18} fill={post.saved ? "currentColor" : "none"} />
             </button>
+            <button aria-label="Remove content" onClick={onRemove}>
+              <Trash2 size={18} />
+            </button>
             <button aria-label="Close viewer" onClick={close}>
               <X size={22} />
             </button>
@@ -376,28 +492,34 @@ export function ContentViewer({
             <h2 id="viewer-title" tabIndex={0}>
               {post.title}
             </h2>
-            {post.platform === "tiktok" && /^\d+$/.test(post.videoId || "") && (
-              <>
-                <div className="video-stage short-stage tiktok-stage">
-                  <iframe
-                    key={post.id}
-                    title={post.title}
-                    src={`https://www.tiktok.com/player/v1/${post.videoId}?autoplay=0&rel=0`}
-                    allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
-                    allowFullScreen
-                  />
-                </div>
-                <p className="player-hint">
-                  If TikTok playback is unavailable, use Open source.
-                </p>
-              </>
-            )}
             {isVideo ? (
               <>
                 <div
-                  className={`video-stage ${post.kind === "short" ? "short-stage" : ""}`}
+                  ref={videoStage}
+                  className={`video-stage ${post.kind === "short" || post.platform === "tiktok" ? "short-stage" : ""} ${expanded === "video" ? "media-expanded" : ""}`}
                 >
-                  {nativeVideo ? (
+                  <button
+                    className="media-fullscreen"
+                    aria-label={
+                      expanded === "video"
+                        ? "Exit fullscreen"
+                        : "Fullscreen video"
+                    }
+                    onClick={() => void fullscreen("video")}
+                  >
+                    {expanded === "video" ? <Minimize /> : <Maximize />}
+                  </button>
+                  {isTikTok ? (
+                    <iframe
+                      ref={tikTok}
+                      key={`${post.id}:${retry}`}
+                      title={post.title}
+                      className="tiktok-frame"
+                      src={`https://www.tiktok.com/player/v1/${post.videoId}?autoplay=0&rel=0`}
+                      allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                    />
+                  ) : nativeVideo ? (
                     <video
                       key={nativeVideo.url}
                       ref={native}
@@ -413,17 +535,28 @@ export function ContentViewer({
                       loop={nativeVideo.loop}
                       muted={nativeVideo.loop}
                       onLoadedMetadata={() => {
+                        setSpeed(native.current?.playbackRate || 1);
                         setReady(true);
                         setError("");
                       }}
+                      onRateChange={(e) =>
+                        setSpeed(e.currentTarget.playbackRate)
+                      }
                       onPlay={() => setPlaying(true)}
                       onPause={() => setPlaying(false)}
                       onEnded={() => setPlaying(false)}
-                      onError={() =>
-                        setError(
-                          "This video couldn't load. Try again or open the source.",
-                        )
-                      }
+                      onError={() => {
+                        if (post.platform === "tiktok") {
+                          setEmbedFallback(true);
+                          setReady(false);
+                          setHint(
+                            "Using TikTok’s embedded player. Speed controls are unavailable in this player.",
+                          );
+                        } else
+                          setError(
+                            "This video couldn't load. Try again or open the source.",
+                          );
+                      }}
                     />
                   ) : (
                     <div ref={host} className="youtube-host" />
@@ -495,11 +628,35 @@ export function ContentViewer({
                     <button
                       disabled={!ready}
                       aria-label="Toggle captions"
+                      hidden={isTikTok}
                       onClick={toggleCaptions}
                     >
                       <Captions size={18} />
                       <span>Captions</span>
                     </button>
+                    {!isTikTok && (
+                      <div
+                        className="speed-controls"
+                        role="group"
+                        aria-label="Playback speed"
+                      >
+                        {rates.map((rate) => (
+                          <button
+                            key={rate}
+                            disabled={!ready}
+                            aria-pressed={speed === rate}
+                            onClick={() => changeSpeed(rate)}
+                          >
+                            {rate}×
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {isTikTok && (
+                      <small>
+                        Speed is unavailable in TikTok’s embedded player.
+                      </small>
+                    )}
                   </div>
                 )}
                 {hint && (
@@ -514,7 +671,8 @@ export function ContentViewer({
             (!isVideo || (!!post.platform && post.platform !== "youtube")) ? (
               <div className="image-viewer">
                 <div
-                  className="image-stage"
+                  ref={imageStage}
+                  className={`image-stage ${expanded === "image" ? "media-expanded" : ""}`}
                   onTouchStart={(e) => {
                     touch.current = {
                       x: e.changedTouches[0].clientX,
@@ -531,6 +689,17 @@ export function ContentViewer({
                       slide(dx < 0 ? 1 : -1);
                   }}
                 >
+                  <button
+                    className="media-fullscreen"
+                    aria-label={
+                      expanded === "image"
+                        ? "Exit fullscreen"
+                        : "Fullscreen image"
+                    }
+                    onClick={() => void fullscreen("image")}
+                  >
+                    {expanded === "image" ? <Minimize /> : <Maximize />}
+                  </button>
                   {failedImage ? (
                     <div className="image-error">
                       <ImageIcon size={28} />
@@ -613,6 +782,15 @@ export function ContentViewer({
               <NotebookPen size={18} /> {notesOpen ? "Hide notes" : "Notes"}
               {post.notes?.trim() ? " •" : ""}
             </button>
+            {post.textTruncated && (
+              <p className="player-hint">
+                X returned a shortened preview.{" "}
+                <a href={post.url} target="_blank" rel="noreferrer">
+                  Read the full post on X
+                </a>
+                .
+              </p>
+            )}
             {post.text && <div className="viewer-text">{post.text}</div>}
             <div className="viewer-tags">
               {creator.tags.map((t) => (
@@ -628,7 +806,7 @@ export function ContentViewer({
               currentTime={
                 isVideo && ready
                   ? () =>
-                      native.current?.currentTime ||
+                      (isTikTok ? position : native.current?.currentTime) ||
                       player.current?.getCurrentTime() ||
                       0
                   : undefined

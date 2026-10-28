@@ -166,3 +166,14 @@ test("sync uses the creator embed first and never treats challenges as an empty 
     globalThis.fetch = original;
   }
 });
+
+test("creator embeds expose native playback only for TikTok HTTPS media hosts", () => {
+  const entry = embedEntry();
+  entry.videoList[0].playAddr = "https://v16.tiktokcdn.com/video.mp4";
+  entry.videoList[1].playAddr = "https://evil.example/video.mp4";
+  entry.videoList[2].playAddr = "http://v16.tiktokcdn.com/video.mp4";
+  const { posts } = parseTikTokEmbed(embedPage(entry), "baby._.vibz", "c");
+  assert.equal(posts[0].videos?.[0].url, "https://v16.tiktokcdn.com/video.mp4");
+  assert.equal(posts[1].videos, undefined);
+  assert.equal(posts[2].videos, undefined);
+});

@@ -157,6 +157,24 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
       "test-creator",
     );
     await call("posts/x:123", "PATCH", { saved: true, notes: "X note" });
+    const fullX = await call("posts/x:123/detail");
+    assert.equal(fullX.textExpanded, true);
+    assert.match(fullX.text, /Complete public post/);
+    await call("sync", "POST");
+    const afterRefresh = (await call("state")).posts.find(
+      (p: any) => p.id === "x:123",
+    );
+    assert.equal(afterRefresh.text, fullX.text);
+    assert.equal(afterRefresh.notes, "X note");
+    await call("posts/x:123", "DELETE");
+    await call("sync", "POST");
+    assert.ok(!(await call("state")).posts.some((p: any) => p.id === "x:123"));
+    await call("posts/x:123", "PATCH", { removed: false });
+    const restored = (await call("state")).posts.find(
+      (p: any) => p.id === "x:123",
+    );
+    assert.equal(restored.saved, true);
+    assert.equal(restored.notes, "X note");
     await call("creators/test-creator", "PATCH", {
       accounts: [
         { platform: "youtube", syncTypes: ["community"] },

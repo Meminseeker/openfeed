@@ -87,6 +87,23 @@ export function parseTikTokProfile(
   };
 }
 
+function tikTokMedia(value: unknown) {
+  if (typeof value !== "string") return;
+  try {
+    const u = new URL(value);
+    if (
+      u.protocol === "https:" &&
+      !u.username &&
+      !u.password &&
+      !u.port &&
+      ["tiktokcdn.com", "tiktokcdn-us.com", "tiktok.com"].some(
+        (host) => u.hostname === host || u.hostname.endsWith(`.${host}`),
+      )
+    )
+      return u.href;
+  } catch {}
+}
+
 // Creator embeds include a server-rendered videoList; normal profile pages
 // often contain only user metadata and load the timeline with JavaScript.
 export function parseTikTokEmbed(
@@ -139,6 +156,9 @@ export function parseTikTokEmbed(
       platform: "tiktok",
       sourceUsername: username,
       videoId: item.id,
+      videos: tikTokMedia(item.playAddr)
+        ? [{ url: tikTokMedia(item.playAddr)!, poster: image }]
+        : undefined,
       title: text.split("\n")[0].slice(0, 160) || "TikTok video",
       text,
       image,

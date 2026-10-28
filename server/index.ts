@@ -2,7 +2,7 @@ import { syncTikTok, tiktokUsername } from "./tiktok.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
-import { syncX, xUsername } from "./x.ts";
+import { syncX, xUsername, expandXPost } from "./x.ts";
 import express from "express";
 import { requestAllowed, validatePublicOrigin } from "./access.ts";
 import { DatabaseSync } from "node:sqlite";
@@ -74,7 +74,7 @@ app.get("/healthz", (_, res) => {
 });
 app.use(express.json({ limit: "100kb" }));
 app.get("/api/state", (_, res) =>
-  res.json({ creators: creators(), posts: posts() }),
+  res.json({ creators: creators(), posts: posts().filter((p) => !p.removed) }),
 );
 app.post("/api/creators", async (req, res, next) => {
   try {
@@ -248,6 +248,23 @@ app.patch("/api/creators/:id", async (req, res) => {
             ? validSyncTypes(a.platform, a.syncTypes)
             : undefined,
       }));
+    for (const account of other) {
+      const previous = c.accounts.find(
+        (a) =>
+          a.platform === account.platform &&
+          (a.platform === "x"
+            ? xUsername(a.username)
+            : a.username
+          ).toLowerCase() === account.username.toLowerCase(),
+      );
+      if (
+        account.platform === "x" &&
+        previous &&
+        JSON.stringify(enabledTypes(previous)) !==
+          JSON.stringify(enabledTypes(account))
+      )
+        account.xSinceId = undefined;
+    }
     c.accounts = [...youtube, ...other];
   }
   saveCreator(c);
@@ -281,7 +298,12 @@ app.post("/api/sync", async (_, res) => {
             account.platform === "tiktok"
               ? await syncTikTok(account.username, c.id)
               : account.platform === "x"
-                ? await syncX(account.username, c.id, account.xSinceId)
+                ? await syncX(
+                    account.username,
+                    c.id,
+                    account.xSinceId,
+                    enabledTypes(account).includes("repost"),
+                  )
                 : account.platform === "instagram"
                   ? await syncInstagram(
                       account.username,
@@ -298,7 +320,12 @@ app.post("/api/sync", async (_, res) => {
           if (!current || !source || !enabledTypes(source).length) continue;
           const old = new Map(posts().map((p) => [p.id, p]));
           for (const p of result.posts) {
-            if (!enabledTypes(source).includes(p.kind)) continue;
+            if (
+              !enabledTypes(source).includes(
+                p.platform === "x" && p.repost ? "repost" : p.kind,
+              )
+            )
+              continue;
             const prev = old.get(p.id);
             const keepDate =
               !!prev?.published && (p.publishedApproximate || !p.published);
@@ -311,6 +338,16 @@ app.post("/api/sync", async (_, res) => {
               read: prev?.read || false,
               saved: prev?.saved || false,
               notes: prev?.notes || "",
+              removed: prev?.removed,
+              ...(prev?.textExpanded &&
+              (prev.text?.length || 0) >= (p.text?.length || 0)
+                ? {
+                    text: prev.text,
+                    title: prev.title,
+                    textExpanded: true,
+                    textTruncated: false,
+                  }
+                : {}),
             };
             if (!expiredPost(updated, retention)) savePost(updated);
           }
@@ -350,7 +387,10 @@ app.post("/api/sync", async (_, res) => {
       }
     }
     prunePosts();
-    res.json({ creators: creators(), posts: posts() });
+    res.json({
+      creators: creators(),
+      posts: posts().filter((p) => !p.removed),
+    });
   } finally {
     syncing = false;
   }
@@ -369,12 +409,44 @@ app.get("/api/posts/:id/video/:index", async (req, res) => {
   }
   await streamXVideo(req, res, url);
 });
+app.get("/api/posts/:id/detail", async (req, res) => {
+  const post = posts().find((p) => p.id === req.params.id && !p.removed);
+  if (!post) {
+    res.sendStatus(404);
+    return;
+  }
+  const expanded = await expandXPost(post);
+  const current = posts().find((p) => p.id === post.id);
+  if (!current || current.removed) {
+    res.sendStatus(404);
+    return;
+  }
+  const updated = {
+    ...current,
+    text: expanded.text,
+    title: expanded.title,
+    textTruncated: expanded.textTruncated,
+    textExpanded: expanded.textExpanded,
+  };
+  savePost(updated);
+  res.json(updated);
+});
+app.delete("/api/posts/:id", (req, res) => {
+  const post = posts().find((p) => p.id === req.params.id);
+  if (!post) {
+    res.sendStatus(404);
+    return;
+  }
+  savePost({ ...post, removed: true });
+  res.json({ ok: true });
+});
 app.patch("/api/posts/:id", (req, res) => {
   const p = posts().find((p) => p.id === req.params.id);
   if (!p) {
     res.sendStatus(404);
     return;
   }
+  if (typeof req.body.removed === "boolean") p.removed = req.body.removed;
   if (typeof req.body.read === "boolean") p.read = req.body.read;
   if (typeof req.body.saved === "boolean") p.saved = req.body.saved;
   if (req.body.notes !== undefined) {

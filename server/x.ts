@@ -115,6 +115,8 @@ export function parseXTimeline(
     }
     let text: string =
       t.note_tweet?.note_tweet_results?.result?.text ||
+      t.note_tweet?.text ||
+      t.extended_tweet?.full_text ||
       t.full_text ||
       t.text ||
       "";
@@ -136,6 +138,13 @@ export function parseXTimeline(
       sourceUsername: username,
       title: text.split("\n")[0]?.slice(0, 160) || "X post",
       text,
+      textTruncated: !!(
+        t.truncated ||
+        (t.note_tweet &&
+          !t.note_tweet?.note_tweet_results?.result?.text &&
+          !t.note_tweet?.text) ||
+        /(?:…|\.\.\.)$/.test(text)
+      ),
       images,
       image: images[0] || videos[0]?.poster,
       videos,
@@ -157,6 +166,7 @@ export async function syncX(
   input: string,
   creatorId: string,
   sinceId?: string,
+  includeReposts = true,
 ) {
   const username = xUsername(input);
   if (process.env.X_BEARER_TOKEN)
@@ -165,6 +175,7 @@ export async function syncX(
       creatorId,
       process.env.X_BEARER_TOKEN,
       sinceId,
+      includeReposts,
     );
   const response = await fetch(
     `https://syndication.twitter.com/srv/timeline-profile/screen-name/${username}`,
@@ -177,7 +188,12 @@ export async function syncX(
     throw new Error(
       `X public timeline unavailable (HTTP ${response.status}). Try again later.`,
     );
-  return parseXTimeline(await response.text(), username, creatorId, true);
+  return parseXTimeline(
+    await response.text(),
+    username,
+    creatorId,
+    includeReposts,
+  );
 }
 
 // App-only official API access still excludes protected profiles.
@@ -186,6 +202,7 @@ async function syncOfficialX(
   creatorId: string,
   token: string,
   sinceId?: string,
+  includeReposts = true,
 ) {
   async function get(path: string) {
     const response = await fetch(`https://api.x.com/2/${path}`, {
@@ -213,7 +230,7 @@ async function syncOfficialX(
   if (profile.protected !== false)
     throw new Error("Private X accounts are not supported.");
   const page = await get(
-    `users/${profile.id}/tweets?max_results=30&exclude=replies&tweet.fields=created_at,author_id,attachments,note_post,entities,referenced_tweets&expansions=attachments.media_keys&media.fields=url,preview_image_url,variants,type${sinceId && /^\d+$/.test(sinceId) ? `&since_id=${sinceId}` : ""}`,
+    `users/${profile.id}/tweets?max_results=30&exclude=${includeReposts ? "replies" : "replies,retweets"}&tweet.fields=created_at,author_id,attachments,note_post,entities,referenced_tweets&expansions=attachments.media_keys&media.fields=url,preview_image_url,variants,type${sinceId && /^\d+$/.test(sinceId) ? `&since_id=${sinceId}` : ""}`,
   );
   if (!Array.isArray(page.data) && page.meta?.result_count !== 0)
     throw new Error("X API did not return a usable timeline.");
@@ -262,7 +279,7 @@ async function syncOfficialX(
     `<script id="__NEXT_DATA__">${JSON.stringify({ props: { pageProps: { timeline: { entries } } } }).replaceAll("<", "\\u003c")}</script>`,
     username,
     creatorId,
-    true,
+    includeReposts,
   );
   const ids = (page.data || [])
     .map((t: any) => t.id)
@@ -281,4 +298,79 @@ async function syncOfficialX(
       ? "X refresh is limited to 30 new posts/reposts. Older excess items were skipped to keep costs and volume down."
       : undefined,
   };
+}
+
+function decodeText(text: string) {
+  return text.replace(
+    /&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,
+    (_, entity: string) => {
+      if (entity.startsWith("#")) {
+        const code =
+          entity[1].toLowerCase() === "x"
+            ? parseInt(entity.slice(2), 16)
+            : Number(entity.slice(1));
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
+      }
+      return (
+        { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" } as Record<
+          string,
+          string
+        >
+      )[entity.toLowerCase()];
+    },
+  );
+}
+// Only accept text from the canonical page for this exact stored post.
+export function parseXPostText(html: string, post: Pick<Post, "url" | "text">) {
+  const canonical = html.match(
+    /<link\b[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i,
+  )?.[1];
+  if (!canonical || decodeText(canonical) !== post.url) return;
+  const heading = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
+  if (!heading) return;
+  const text = decodeText(
+    heading.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, ""),
+  );
+  const full = text.match(/ on X: "([\s\S]*)"$/)?.[1];
+  if (
+    !full ||
+    /(?:…|\.\.\.)$/.test(full.trim()) ||
+    full.length < (post.text?.length || 0)
+  )
+    return;
+  return full;
+}
+const textRequests = new Map<string, { until: number; text?: string }>();
+export async function expandXPost(post: Post) {
+  if (
+    post.platform !== "x" ||
+    post.repost ||
+    post.textExpanded ||
+    (!post.textTruncated && (post.text?.length || 0) < 200)
+  )
+    return post;
+  if (!/^https:\/\/x\.com\/[a-zA-Z0-9_]{1,15}\/status\/\d+$/.test(post.url))
+    return post;
+  const cached = textRequests.get(post.id);
+  let text = cached && cached.until > Date.now() ? cached.text : undefined;
+  if (!cached || cached.until <= Date.now()) {
+    try {
+      const r = await fetch(post.url, {
+        headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.ok) text = parseXPostText(await r.text(), post);
+    } catch {}
+    if (textRequests.size > 500) textRequests.clear();
+    textRequests.set(post.id, { until: Date.now() + 300000, text });
+  }
+  return text
+    ? {
+        ...post,
+        text,
+        title: text.split("\n")[0].slice(0, 160),
+        textTruncated: false,
+        textExpanded: true,
+      }
+    : { ...post, textTruncated: true };
 }

@@ -1,9 +1,16 @@
+import { postLabel } from "./post-label";
+import {
+  timeRanges,
+  inTimeRange,
+  selectedCreators,
+  type TimeRange,
+} from "./feed-filters";
+import { InstallApp } from "./InstallApp";
 import { relativeTime } from "./relative-time";
 import {
   contentFilters,
   contentFilterKey,
   topicCreators,
-  eligibleSelection,
 } from "./feed-filters";
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
@@ -47,7 +54,9 @@ function App() {
     [tag, setTag] = useState("All topics"),
     [query, setQuery] = useState(""),
     [types, setTypes] = useState<string[]>([]),
-    [creatorFilter, setCreatorFilter] = useState<string[]>([]),
+    [creatorFilter, setCreatorFilter] = useState<string[] | null>(null),
+    [timeRange, setTimeRange] = useState<TimeRange>("All"),
+    [removedPost, setRemovedPost] = useState<Post | null>(null),
     [unread, setUnread] = useState(false),
     [filters, setFilters] = useState(false),
     [modal, setModal] = useState(false),
@@ -74,7 +83,7 @@ function App() {
   }, []);
   useEffect(
     () => setLimit(24),
-    [page, tag, query, types, creatorFilter, unread],
+    [page, tag, query, types, creatorFilter, unread, timeRange],
   );
   const refresh = async () => {
     setBusy(true);
@@ -103,14 +112,33 @@ function App() {
   const tags = [...new Set(state.creators.flatMap((c) => c.tags))].sort();
   const eligibleCreators = topicCreators(state.creators, tag);
   useEffect(() => {
-    setCreatorFilter((current) => {
-      const next = eligibleSelection(
-        current,
-        topicCreators(state.creators, tag),
-      );
-      return next.length === current.length ? current : next;
-    });
-  }, [tag, state.creators]);
+    setCreatorFilter(null);
+  }, [tag]);
+  const selection = selectedCreators(creatorFilter, eligibleCreators);
+  const unreadInTopic = (topic: string) =>
+    state.posts.filter(
+      (p) =>
+        !p.read &&
+        inTimeRange(p, timeRange) &&
+        state.creators.some(
+          (c) =>
+            c.id === p.creatorId &&
+            (topic === "All topics" || c.tags.includes(topic)),
+        ),
+    ).length;
+  const removePost = async (post: Post) => {
+    try {
+      await api(`posts/${encodeURIComponent(post.id)}`, "DELETE");
+      setState((s) => ({
+        ...s,
+        posts: s.posts.filter((p) => p.id !== post.id),
+      }));
+      setRemovedPost(post);
+      setViewerIds([]);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   const visible = state.posts
     .filter((p) => {
       const c = state.creators.find((c) => c.id === p.creatorId);
@@ -120,7 +148,8 @@ function App() {
         (page !== "noted" || !!p.notes?.trim()) &&
         (tag === "All topics" || c.tags.includes(tag)) &&
         (!types.length || types.includes(contentFilterKey(p))) &&
-        (!creatorFilter.length || creatorFilter.includes(c.id)) &&
+        selection.includes(c.id) &&
+        inTimeRange(p, timeRange) &&
         (!unread || !p.read) &&
         `${p.title} ${p.text || ""} ${c.name}`
           .toLowerCase()
@@ -134,6 +163,28 @@ function App() {
     if (!p.read) void mutate(p, "read");
   };
   const viewerPost = state.posts.find((p) => p.id === viewerIds[viewerIndex]);
+  useEffect(() => {
+    if (viewerPost?.platform !== "x" || viewerPost.textExpanded) return;
+    const id = viewerPost.id;
+    void api(`posts/${encodeURIComponent(id)}/detail`)
+      .then((detail) => {
+        setState((s) => ({
+          ...s,
+          posts: s.posts.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  text: detail.text,
+                  title: detail.title,
+                  textTruncated: detail.textTruncated,
+                  textExpanded: detail.textExpanded,
+                }
+              : item,
+          ),
+        }));
+      })
+      .catch(() => {});
+  }, [viewerPost?.id]);
   const moveViewer = (delta: number) => {
     const index = viewerIndex + delta;
     if (index < 0 || index >= viewerIds.length) return;
@@ -188,6 +239,7 @@ function App() {
             </button>
           ))}
         </nav>
+        <InstallApp />
         <div className="topic-heading">
           YOUR TOPICS <span>{tags.length}</span>
         </div>
@@ -369,14 +421,13 @@ function App() {
                     className={!unread ? "active" : ""}
                     onClick={() => setUnread(false)}
                   >
-                    All posts <span>{state.posts.length}</span>
+                    All posts
                   </button>
                   <button
                     className={unread ? "active" : ""}
                     onClick={() => setUnread(true)}
                   >
-                    Unread{" "}
-                    <span>{state.posts.filter((p) => !p.read).length}</span>
+                    Unread <span>{unreadInTopic(tag)}</span>
                   </button>
                 </div>
                 <div className="tools">
@@ -386,7 +437,7 @@ function App() {
                   >
                     <SlidersHorizontal size={16} />
                     Filters
-                    {(types.length > 0 || creatorFilter.length > 0) && (
+                    {(types.length > 0 || creatorFilter !== null) && (
                       <span className="filter-dot" />
                     )}
                   </button>
@@ -406,7 +457,7 @@ function App() {
                     onClick={() => setTag(t)}
                     className={tag === t ? "active" : ""}
                   >
-                    {t}
+                    {t} <span className="unread-count">{unreadInTopic(t)}</span>
                   </button>
                 ))}
                 <label className="search">
@@ -418,6 +469,50 @@ function App() {
                   />
                 </label>
               </div>
+              <div
+                className="time-filters"
+                role="group"
+                aria-label="Publication time"
+              >
+                {timeRanges.map((range) => (
+                  <button
+                    key={range}
+                    aria-pressed={timeRange === range}
+                    title={
+                      range === "1w+"
+                        ? "Older than one week"
+                        : range === "All"
+                          ? "Any time"
+                          : `Within the last ${range}`
+                    }
+                    onClick={() => setTimeRange(range)}
+                  >
+                    {range}
+                  </button>
+                ))}
+              </div>
+              {removedPost && (
+                <div className="removed-notice" role="status">
+                  Content removed.{" "}
+                  <button
+                    onClick={async () => {
+                      try {
+                        await api(
+                          `posts/${encodeURIComponent(removedPost.id)}`,
+                          "PATCH",
+                          { removed: false },
+                        );
+                        setRemovedPost(null);
+                        await load();
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
+                    }}
+                  >
+                    Undo
+                  </button>
+                </div>
+              )}
               {filters && (
                 <div className="filters">
                   <div>
@@ -445,9 +540,15 @@ function App() {
                     </legend>
                     <button
                       type="button"
-                      aria-pressed={!creatorFilter.length}
-                      className={!creatorFilter.length ? "selected" : ""}
-                      onClick={() => setCreatorFilter([])}
+                      aria-pressed={
+                        selection.length === eligibleCreators.length
+                      }
+                      className={
+                        selection.length === eligibleCreators.length
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() => setCreatorFilter(null)}
                     >
                       All creators in this topic
                     </button>
@@ -456,12 +557,12 @@ function App() {
                         <label key={c.id}>
                           <input
                             type="checkbox"
-                            checked={creatorFilter.includes(c.id)}
+                            checked={selection.includes(c.id)}
                             onChange={() =>
-                              setCreatorFilter((current) =>
-                                current.includes(c.id)
-                                  ? current.filter((id) => id !== c.id)
-                                  : [...current, c.id],
+                              setCreatorFilter(
+                                selection.includes(c.id)
+                                  ? selection.filter((id) => id !== c.id)
+                                  : [...selection, c.id],
                               )
                             }
                           />
@@ -472,14 +573,13 @@ function App() {
                         <small>No creators in this topic.</small>
                       )}
                     </div>
-                    <small>
-                      Select several creators. No selection shows all.
-                    </small>
+                    <small>Uncheck any creators you want to exclude.</small>
                   </fieldset>
                   <button
                     onClick={() => {
                       setTypes([]);
-                      setCreatorFilter([]);
+                      setCreatorFilter(null);
+                      setTimeRange("All");
                       setTag("All topics");
                       setQuery("");
                       setUnread(false);
@@ -492,10 +592,7 @@ function App() {
               <div className="feed-info">
                 <span>
                   <span className="live-dot" />
-                  Your sources{" "}
-                  <span className="muted">
-                    · Chronological · {visible.length} posts
-                  </span>
+                  Your sources <span className="muted">· Chronological</span>
                 </span>
                 <button
                   disabled={!visible.some((p) => !p.read)}
@@ -555,6 +652,7 @@ function App() {
                       p={p}
                       c={state.creators.find((c) => c.id === p.creatorId)!}
                       mutate={mutate}
+                      remove={() => void removePost(p)}
                       open={() => viewPost(p)}
                     />
                   ))}
@@ -607,6 +705,7 @@ function App() {
             }))
           }
           onSave={() => void mutate(viewerPost, "saved")}
+          onRemove={() => void removePost(viewerPost)}
         />
       )}
       {modal && (
@@ -674,12 +773,14 @@ function Empty({
   );
 }
 function PostCard({
+  remove,
   p,
   c,
   mutate,
   open,
 }: {
   open: () => void;
+  remove: () => void;
   p: Post;
   c: Creator;
   mutate: (p: Post, f: "read" | "saved") => Promise<void>;
@@ -703,18 +804,7 @@ function PostCard({
           >
             {p.publishedApproximate && p.published ? "≈ " : ""}
             {relativeTime(p.published)}{" "}
-            <span>
-              ·{" "}
-              {p.platform === "x"
-                ? p.repost
-                  ? "X · Repost"
-                  : "X"
-                : p.platform === "instagram"
-                  ? "Instagram"
-                  : p.platform === "tiktok"
-                    ? "TikTok"
-                    : "YouTube"}
-            </span>
+            <span className="post-type">· {postLabel(p)}</span>
           </small>
         </div>
         <button
@@ -750,17 +840,7 @@ function PostCard({
               <span className="album-count">{p.images.length} images</span>
             )}
             {p.duration && <span className="duration">{p.duration}</span>}
-            <span className="kind">
-              {p.kind === "short"
-                ? "SHORT"
-                : p.kind === "community"
-                  ? "COMMUNITY"
-                  : p.kind === "post"
-                    ? p.platform === "instagram"
-                      ? "INSTAGRAM"
-                      : "X POST"
-                    : "VIDEO"}
-            </span>
+            <span className="kind">{postLabel(p)}</span>
           </div>
         )}
         <div className="post-body">
@@ -779,6 +859,13 @@ function PostCard({
           {p.read ? "Read" : "Mark as read"}
         </button>
         <LinkActions url={p.url} compact />
+        <button
+          aria-label="Remove content"
+          title="Remove from feed"
+          onClick={remove}
+        >
+          <Trash2 size={16} />
+        </button>
       </div>
     </article>
   );
@@ -814,7 +901,9 @@ function SyncChoices({
               )
             }
           />
-          {syncLabels[kind]}
+          {account.platform === "instagram" && kind === "short"
+            ? "Reels"
+            : syncLabels[kind]}
         </label>
       ))}
       {!selected.length && (

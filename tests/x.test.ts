@@ -260,3 +260,53 @@ test("public X snapshots exclude replies and can retain approved-account reposts
     [["x:124", true]],
   );
 });
+
+test("reported long posts recover their complete text from the canonical X page", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parseXPostText } = await import("../server/x.ts");
+  for (const [id, ending] of [
+    ["2115201880208904628", "ölmesi gerekiyor?"],
+    ["2115186777749127475", "Marcus Aurelius"],
+  ]) {
+    const html = readFileSync(
+      new URL(`./fixtures/x-long-${id}.html`, import.meta.url),
+      "utf8",
+    );
+    const text = parseXPostText(html, {
+      url: `https://x.com/gztcom/status/${id}`,
+      text: "Short preview",
+    });
+    assert.ok(text?.includes(ending));
+    assert.ok(text?.includes("\n\n"));
+    assert.equal(
+      parseXPostText(html, { url: "https://x.com/other/status/123" }),
+      undefined,
+    );
+  }
+});
+test("explicit posts-only sync excludes reposts in the public snapshot", async () => {
+  const original = globalThis.fetch;
+  const oldToken = process.env.X_BEARER_TOKEN;
+  delete process.env.X_BEARER_TOKEN;
+  globalThis.fetch = async () =>
+    new Response(
+      html([
+        tweet("123"),
+        tweet("124", {
+          retweeted_status_id_str: "99",
+          full_text: "RT @other: Shared",
+        }),
+      ]),
+    );
+  try {
+    const result = await syncX("test", "c", undefined, false);
+    assert.deepEqual(
+      result.posts.map((p) => p.id),
+      ["x:123"],
+    );
+  } finally {
+    globalThis.fetch = original;
+    if (oldToken === undefined) delete process.env.X_BEARER_TOKEN;
+    else process.env.X_BEARER_TOKEN = oldToken;
+  }
+});

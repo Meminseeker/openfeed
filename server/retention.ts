@@ -9,6 +9,7 @@ export function retentionDays(value = process.env.OPENFEED_RETENTION_DAYS) {
 export function expiredPost(post: Post, days: number, now = Date.now()) {
   const published = Date.parse(post.published);
   return (
+    !post.removed &&
     !post.saved &&
     !post.notes?.trim() &&
     Number.isFinite(published) &&
