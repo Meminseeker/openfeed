@@ -41,3 +41,41 @@ export function selectedCreators(
     ? creators.map((c) => c.id)
     : eligibleSelection(selection, creators);
 }
+
+export interface FeedSelection {
+  page: string;
+  tag: string;
+  query: string;
+  types: string[];
+  selection: string[];
+  timeRange: TimeRange;
+  unread: boolean;
+  allCreators: boolean;
+}
+export function matchesFeedFilters(
+  post: Post,
+  creators: Creator[],
+  filters: FeedSelection,
+  ignoreType = false,
+) {
+  const creator = creators.find((c) => c.id === post.creatorId);
+  return (
+    !!creator &&
+    (filters.page !== "feed" || !post.libraryOnly) &&
+    (filters.page !== "saved" || post.saved) &&
+    (filters.page !== "noted" || !!post.notes?.trim()) &&
+    (filters.tag === "All topics" || creator.tags.includes(filters.tag)) &&
+    (ignoreType ||
+      !filters.types.length ||
+      filters.types.includes(contentFilterKey(post))) &&
+    (filters.selection.includes(creator.id) ||
+      (filters.page !== "feed" &&
+        creator.libraryOnly &&
+        filters.allCreators)) &&
+    inTimeRange(post, filters.timeRange) &&
+    (!filters.unread || !post.read) &&
+    `${post.title} ${post.text || ""} ${creator.name}`
+      .toLowerCase()
+      .includes(filters.query.toLowerCase())
+  );
+}

@@ -310,3 +310,44 @@ test("explicit posts-only sync excludes reposts in the public snapshot", async (
     else process.env.X_BEARER_TOKEN = oldToken;
   }
 });
+
+test("detail repair retries legacy expansions and handles short previews and reposts with verified full-status fallback", async () => {
+  const { expandXPost } = await import("../server/x.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) =>
+    String(input).startsWith("https://x.com/")
+      ? new Response("blocked", { status: 403 })
+      : Response.json({
+          code: 200,
+          tweet: {
+            id: "999001",
+            text: "The full post\n\nWith its complete ending.",
+            author: { screen_name: "test" },
+          },
+        });
+  try {
+    for (const patch of [
+      { text: "Tiny…" },
+      { text: "Legacy text", textExpanded: true },
+      { text: "RT @other: preview", repost: true },
+    ]) {
+      const p = await expandXPost({
+        id: "x:999001",
+        creatorId: "c",
+        platform: "x",
+        title: "Preview",
+        url: "https://x.com/test/status/999001",
+        kind: "post",
+        published: "",
+        read: false,
+        saved: false,
+        ...patch,
+      });
+      assert.equal(p.text, "The full post\n\nWith its complete ending.");
+      assert.equal(p.textVersion, 2);
+      assert.equal(p.textTruncated, false);
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});

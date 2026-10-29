@@ -23,7 +23,7 @@ npm start
 
 ## Cloud deployment
 
-See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean sizing, HTTPS and password protection at `openfeed.meminseeker.com`, data migration, backups, and manual updates. The cloud setup is one shared workspace, including when friends have access.
+See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean sizing, HTTPS and password protection at `openfeed.meminseeker.com`, data migration, backups, and manual updates. Friends sign up for separate workspaces.
 
 ## What works
 
@@ -33,7 +33,7 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 - Set content types to sync independently on each creator/source. Empty selection pauses that source. Existing posts and notes remain available. Other-platform preferences are stored until those integrations are implemented.
 - Open posts in a modal with video playback, image carousel, previous/next navigation, and separate copy/open-source actions.
 - Write autosaved notes on any item, insert video timestamps, and jump back to timestamped notes. Notes are stored in SQLite, with a browser draft backup for pending/failed saves.
-- Combine topic, multiple-creator, platform-specific content-type, text-search, and unread filters. Type controls distinguish YT videos/Shorts/community, X posts/reposts, and IG posts/albums/videos/Reels. The creator checklist follows the selected topic; selections outside that topic are cleared. No creator selection shows everyone in the topic.
+- Combine topic, multiple-creator, platform-specific content-type, text-search, and unread filters. Type controls distinguish YT videos/Shorts/community, X posts/reposts, and IG posts/albums/videos/Reels. The creator checklist follows the selected topic; selections outside that topic are cleared. All creators are selected initially; explicitly unselecting everyone shows no content.
 - Save posts for later, mark individual posts or the current filtered result as read, and unfollow creators.
 - Persistent local state, explicit refresh, partial-source error reporting, responsive layout, and finite batches of 24 posts. New creators trigger a refresh.
 
@@ -85,7 +85,7 @@ Feed shortcuts work while focus is outside the cross-origin YouTube frame. Insid
 
 Notes autosave after 600 ms and flush when switching content or closing. Writes are serialized per item; failed or pending drafts stay in the browser and are retried on reopening. The **Save now** action retries explicitly. Notes persist through refresh and server restart. **Add current timestamp** inserts a marker such as `[1:23]`; timestamp buttons below the notes seek back to that point. Notes have a 50,000-character limit.
 
-The app has no application login or multi-user isolation. Local runs listen on loopback by default. The provided cloud Compose setup adds HTTPS and proxy password protection; all authorized visitors still share one workspace. Follow [the deployment guide](docs/deployment.md) before exposing it. The API rejects unapproved hosts and cross-origin browser requests.
+The app has individual signup/login accounts. Each account owns its creators, posts, read state, notes, playlists and links. Passwords are salted with scrypt; sessions use expiring HttpOnly cookies and are revoked on logout. Local runs listen on loopback; cloud deployments use HTTPS through Caddy. Follow [the deployment guide](docs/deployment.md), including the existing-workspace claim procedure, before upgrading. The API rejects unapproved hosts and cross-origin requests.
 
 ## Structure
 
@@ -107,7 +107,7 @@ Development takes place on `dev`; `main` is reserved for explicitly requested re
 
 The **Noted down** sidebar category shows posts with nonempty notes. Feed dates use elapsed time and update every minute; hover over a date for its exact timestamp.
 
-Unsaved posts without notes are removed after **90 days**, at startup, hourly, and after refresh. Set `OPENFEED_RETENTION_DAYS` to a positive number to change this window. Saved posts, annotated posts, and posts with unknown dates are retained. Refresh skips expired items so old source posts do not refill the database.
+Unsaved posts without notes are removed after **7 days**, at startup, hourly, and after refresh. Set `OPENFEED_RETENTION_DAYS` to a positive number to change this window. Saved posts, annotated posts, playlist items, pasted links, and posts with unknown dates are retained. Refresh skips expired items so old source posts do not refill the database.
 
 On phones the viewer fills the screen, with larger controls and notes collapsed by default. Tap **Notes** below the media to expand them. Swipe left/right on the title, text, or footer to move between content items. Image albums retain their own image swipe gesture; embedded players handle touches themselves. Previous/Next buttons remain available below the content.
 
@@ -119,14 +119,22 @@ Embed video dates are estimated from their IDs because the embed omits publicati
 
 ### Install on your phone
 
-Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On iPhone/iPad use Safari → Share → Add to Home Screen. The app opens in its own window with an OpenFeed icon. Installation does not remove the site's password protection. Network access is required for the feed, syncing, media and saving notes; the offline page explains how to reconnect. The service worker caches only that generic offline page, never feed data or notes. Local note drafts retain their existing behavior.
+Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On iPhone/iPad use Safari → Share → Add to Home Screen. The app opens in its own window with an OpenFeed icon. Installation uses the same individual login as the website. The manifest and app icons are public so phone installers can retrieve them. If an older installation still shows “O”, remove that home-screen shortcut and install it again after deployment. Network access is required for the feed, syncing, media and saving notes; the offline page explains how to reconnect. The service worker caches only that generic offline page, never feed data or notes. Local note drafts retain their existing behavior.
 
 ### Feed and playback controls
 
-- Creator checkboxes start checked. **All creators in this topic** checks everyone; uncheck one or more to exclude them. Unchecking everyone shows no posts.
-- Time buttons show items within the last 1, 2, 3, 5 or 7 days. **1w+** means older than seven days; **All** includes undated content. Topic badges show unread items within the selected time window.
+- Creator checkboxes start checked. **All creators in this topic** checks everyone; uncheck one or more to exclude them. **Unselect all creators** clears the selection and shows no posts.
+- Time buttons show items within the last 1, 2, 3, 5 or 7 days. **1w+** means older than seven days; **All** includes undated content. Topic badges show unread items within the selected time window. Content-type badges count unread items matching the selected topic, creators, time range, search and saved/noted section; they ignore the type selection itself so you can compare types.
 - Remove content with its trash button. **Undo** restores it with saved status and notes intact. A hidden record is retained so refreshing does not bring removed items back.
 - X source settings distinguish posts and reposts. New accounts sync posts only. Changing these choices affects subsequent imports and resets the X API cursor so newly enabled types can be fetched.
-- Long X posts are repaired from their canonical public X page when opened. If unavailable, the viewer identifies the shortened preview and links to the original.
+- X posts are checked when opened, including short previews, reposts and previously repaired posts. The canonical public X page is supplemented by the public [FxEmbed status API](https://docs.fxembed.com/api/introduction/), with exact status-ID validation and a five-minute cache. Only the public status ID is sent to FxEmbed; no account credentials or notes are sent. Full text is preserved on later syncs. If the sources cannot supply it, a known shortened preview is labeled and the source link remains available.
 - Image and video fullscreen buttons expand the media; browsers without the Fullscreen API use an expanded in-app view. Playback-speed buttons use the rates supported by the player.
 - TikTok prefers the native video URL supplied by the public embed, enabling speed and seek controls. If that URL expires or fails, the official iframe is used with play/pause and seek controls. TikTok's documented iframe API does not expose playback speed, so speed buttons are unavailable in that fallback.
+
+### Playlists and Links
+
+**Playlists** imports public or unlisted YouTube playlists, including older videos. Select a playlist to view it in its original order; refresh it to discover changes. Both classic and modern YouTube cards and continuation pages are supported (up to 21 pages per import). Partial imports show a warning. Private, deleted or unplayable items cannot be imported. Removing a playlist preserves items also stored as links, saved for later, noted, or belonging to another playlist.
+
+**Links** imports individual YouTube, X, Instagram and TikTok content URLs without following their creators. TikTok short links are resolved only through TikTok-owned hosts. Imported links and playlist items never expire under feed retention, and do not appear in the recent feed unless a followed creator also supplies them. Saved and noted library items remain available in those sidebar sections. Platform access and embedding restrictions still apply; no login walls or private content are bypassed.
+
+Usernames are case-insensitive, 3–40 letters/numbers/dots/dashes/underscores. Passwords are 12–128 characters. Signup is open after the existing workspace is claimed; password-reset email is not implemented. Browser note drafts are scoped by account. Log out on shared devices.

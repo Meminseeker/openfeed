@@ -79,3 +79,72 @@ test("platform labels distinguish Reels, Shorts and reposts; X defaults exclude 
     ["repost"],
   );
 });
+
+test("type counts share feed filters but ignore type toggles; include saved library items", async () => {
+  const { matchesFeedFilters } = await import("../src/feed-filters.ts");
+  const creators = [
+    { id: "a", name: "Alice", tags: ["News"], accounts: [], avatar: "" },
+    {
+      id: "b",
+      name: "Bob",
+      tags: [],
+      accounts: [],
+      avatar: "",
+      libraryOnly: true,
+    },
+  ];
+  const p = {
+    id: "p",
+    creatorId: "a",
+    title: "A useful post",
+    url: "https://x.com/test/status/123",
+    platform: "x" as const,
+    kind: "post" as const,
+    published: new Date().toISOString(),
+    read: false,
+    saved: true,
+  };
+  const filters = {
+    page: "feed",
+    tag: "News",
+    query: "useful",
+    types: ["youtube:video"],
+    selection: ["a"],
+    timeRange: "1d" as const,
+    unread: false,
+    allCreators: true,
+  };
+  assert.equal(matchesFeedFilters(p, creators, filters), false);
+  assert.equal(matchesFeedFilters(p, creators, filters, true), true);
+  assert.equal(
+    matchesFeedFilters(
+      p,
+      creators,
+      { ...filters, selection: [], allCreators: false },
+      true,
+    ),
+    false,
+  );
+  assert.equal(
+    matchesFeedFilters(p, creators, { ...filters, query: "missing" }, true),
+    false,
+  );
+  assert.equal(
+    matchesFeedFilters(
+      { ...p, creatorId: "b", libraryOnly: true },
+      creators,
+      { ...filters, tag: "All topics" },
+      true,
+    ),
+    false,
+  );
+  assert.equal(
+    matchesFeedFilters(
+      { ...p, creatorId: "b", libraryOnly: true },
+      creators,
+      { ...filters, page: "saved", tag: "All topics" },
+      true,
+    ),
+    true,
+  );
+});

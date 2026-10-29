@@ -344,9 +344,7 @@ const textRequests = new Map<string, { until: number; text?: string }>();
 export async function expandXPost(post: Post) {
   if (
     post.platform !== "x" ||
-    post.repost ||
-    post.textExpanded ||
-    (!post.textTruncated && (post.text?.length || 0) < 200)
+    (post.textExpanded === true && post.textVersion === 2)
   )
     return post;
   if (!/^https:\/\/x\.com\/[a-zA-Z0-9_]{1,15}\/status\/\d+$/.test(post.url))
@@ -361,6 +359,14 @@ export async function expandXPost(post: Post) {
       });
       if (r.ok) text = parseXPostText(await r.text(), post);
     } catch {}
+    try {
+      const status = await fetchXStatus(post.url);
+      if (
+        typeof status.text === "string" &&
+        status.text.length >= (text || post.text || "").length
+      )
+        text = status.text;
+    } catch {}
     if (textRequests.size > 500) textRequests.clear();
     textRequests.set(post.id, { until: Date.now() + 300000, text });
   }
@@ -371,6 +377,32 @@ export async function expandXPost(post: Post) {
         title: text.split("\n")[0].slice(0, 160),
         textTruncated: false,
         textExpanded: true,
+        textVersion: 2,
       }
-    : { ...post, textTruncated: true };
+    : {
+        ...post,
+        textTruncated:
+          post.textTruncated || /(?:…|\.\.\.)$/.test(post.text || ""),
+      };
+}
+
+// Public fallback: validate the exact status ID; never send cookies or credentials.
+export async function fetchXStatus(url: string): Promise<any> {
+  const id = new URL(url).pathname.match(/\/status\/(\d+)$/)?.[1];
+  if (!id) throw new Error("Invalid X post URL.");
+  const r = await fetch(`https://api.fxtwitter.com/status/${id}`, {
+    headers: { "User-Agent": "OpenFeed/1.0 (public post reader)" },
+    signal: AbortSignal.timeout(15000),
+    redirect: "error",
+  });
+  if (!r.ok) throw new Error("X post unavailable. Please try again later.");
+  const data = (await r.json()) as any;
+  if (
+    data.code !== 200 ||
+    data.tweet?.id !== id ||
+    typeof data.tweet.text !== "string" ||
+    data.tweet.author?.protected
+  )
+    throw new Error("X did not return this public post.");
+  return data.tweet;
 }

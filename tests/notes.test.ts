@@ -46,3 +46,25 @@ test("a failed note save does not block subsequent retries", async () => {
     globalThis.fetch = original;
   }
 });
+
+test("queued and unmount note saves keep their original account after an account switch", async () => {
+  const { setActiveAccount } = await import("../src/api");
+  const original = globalThis.fetch;
+  const seen: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    seen.push((init?.headers as Record<string, string>)["X-OpenFeed-User"]);
+    return Response.json({});
+  };
+  try {
+    setActiveAccount("alice");
+    const write = writeNotes("shared", "Alice draft");
+    setActiveAccount("bob");
+    await write;
+    await writeNotes("shared", "unmount draft", "alice");
+    await writeNotes("shared", "Bob draft");
+    assert.deepEqual(seen, ["alice", "alice", "bob"]);
+  } finally {
+    setActiveAccount("");
+    globalThis.fetch = original;
+  }
+});

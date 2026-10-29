@@ -78,6 +78,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
             PORT: "0",
             OPENFEED_DB: path,
             OPENFEED_RETENTION_DAYS: "90",
+            OPENFEED_SETUP_TOKEN: "test-setup-secret",
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -104,17 +105,40 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
       proc.once("exit", () => resolve());
       proc.kill();
     });
+  let cookie = "";
   const call = async (path: string, method = "GET", body?: unknown) => {
     const res = await fetch(`${base}/api/${path}`, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Cookie: cookie },
       body: body ? JSON.stringify(body) : undefined,
     });
     assert.ok(res.ok, `${method} ${path}: ${res.status}`);
+    if (res.headers.get("set-cookie"))
+      cookie = res.headers.get("set-cookie")!.split(";")[0];
     return res.json();
   };
   try {
     await start();
+    assert.equal((await fetch(`${base}/api/state`)).status, 401);
+    assert.equal(
+      (
+        await fetch(`${base}/api/auth/signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: "intruder",
+            password: "long-enough-password",
+            setupToken: "wrong",
+          }),
+        })
+      ).status,
+      403,
+    );
+    await call("auth/signup", "POST", {
+      username: "owner",
+      password: "test-password-123",
+      setupToken: "test-setup-secret",
+    });
     const initial = await call("state");
     assert.ok(!initial.posts.some((p: any) => p.id === "expired"));
     assert.ok(initial.posts.some((p: any) => p.id === "saved-old"));
@@ -208,7 +232,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     await call(`creators/${xCreator.id}`, "DELETE");
     const bad = await fetch(`${base}/api/creators/test-creator`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Cookie: cookie },
       body: JSON.stringify({
         accounts: [{ platform: "youtube", syncTypes: ["post"] }],
       }),
@@ -269,13 +293,17 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
     assert.equal(igPost.saved, true);
     const duplicate = await fetch(`${base}/api/creators`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Cookie: cookie },
       body: JSON.stringify({ platform: "instagram", channel: "@TESTIG" }),
     });
     assert.equal(duplicate.status, 409);
     await call(`creators/${ig.id}`, "DELETE");
     await call("creators/test-creator", "DELETE");
-    assert.deepEqual(await call("state"), { creators: [], posts: [] });
+    assert.deepEqual(await call("state"), {
+      creators: [],
+      posts: [],
+      playlists: [],
+    });
   } finally {
     if (proc! && proc.exitCode === null) await stop();
     rmSync(dir, { recursive: true, force: true });

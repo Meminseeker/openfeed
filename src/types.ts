@@ -31,6 +31,7 @@ export interface Account {
   error?: string;
 }
 export interface Creator {
+  libraryOnly?: boolean;
   id: string;
   name: string;
   tags: string[];
@@ -57,13 +58,26 @@ export interface Post {
   published: string;
   publishedApproximate?: boolean;
   duration?: string;
+  libraryOnly?: boolean;
+  linked?: boolean;
+  playlistIds?: string[];
   removed?: boolean;
   textTruncated?: boolean;
   textExpanded?: boolean;
+  textVersion?: number;
   read: boolean;
   saved: boolean;
 }
 export interface State {
+  playlists?: Playlist[];
   creators: Creator[];
   posts: Post[];
+}
+
+export interface Playlist {
+  id: string;
+  title: string;
+  url: string;
+  postIds: string[];
+  warning?: string;
 }

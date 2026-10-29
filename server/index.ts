@@ -1,3 +1,5 @@
+import { importLink, importPlaylist } from "./library.ts";
+import { initializeAccounts, installAuth, owner } from "./auth.ts";
 import { syncTikTok, tiktokUsername } from "./tiktok.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
@@ -26,34 +28,43 @@ const db = new DatabaseSync(databasePath);
 db.exec(
   `PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS creators (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, data TEXT NOT NULL);`,
 );
+initializeAccounts(db);
 const creators = (): Creator[] =>
   db
-    .prepare("SELECT data FROM creators")
-    .all()
+    .prepare("SELECT data FROM creators WHERE user_id=?")
+    .all(owner())
     .map((r) => JSON.parse(r.data as string));
 const posts = (): Post[] =>
   db
-    .prepare("SELECT data FROM posts")
-    .all()
+    .prepare("SELECT data FROM posts WHERE user_id=?")
+    .all(owner())
     .map((r) => JSON.parse(r.data as string));
 function saveCreator(c: Creator) {
-  db.prepare("INSERT OR REPLACE INTO creators VALUES (?,?)").run(
+  db.prepare("INSERT OR REPLACE INTO creators VALUES (?,?,?)").run(
+    owner(),
     c.id,
     JSON.stringify(c),
   );
 }
 function savePost(p: Post) {
-  db.prepare("INSERT OR REPLACE INTO posts VALUES (?,?,?)").run(
+  db.prepare("INSERT OR REPLACE INTO posts VALUES (?,?,?,?)").run(
+    owner(),
     p.id,
     p.creatorId,
     JSON.stringify(p),
   );
 }
 const retention = retentionDays();
-function prunePosts() {
-  const remove = db.prepare("DELETE FROM posts WHERE id = ?");
-  for (const post of posts())
-    if (expiredPost(post, retention)) remove.run(post.id);
+function prunePosts(userId?: string) {
+  const remove = db.prepare("DELETE FROM posts WHERE user_id=? AND id=?");
+  for (const row of db
+    .prepare(
+      "SELECT user_id,id,data FROM posts WHERE user_id != 'legacy'" +
+        (userId ? " AND user_id=?" : ""),
+    )
+    .all(...(userId ? [userId] : [])))
+    if (expiredPost(JSON.parse(row.data as string), retention))
+      remove.run(row.user_id, row.id);
 }
 prunePosts();
 const cleanupTimer = setInterval(prunePosts, 60 * 60 * 1000);
@@ -61,6 +72,8 @@ cleanupTimer.unref();
 const app = express();
 app.disable("x-powered-by");
 const publicOrigin = validatePublicOrigin(process.env.OPENFEED_PUBLIC_ORIGIN);
+// Production is reachable only through the single Caddy proxy (no published app port).
+if (publicOrigin) app.set("trust proxy", 1);
 app.use((req, res, next) => {
   if (!requestAllowed(req.headers.host, req.headers.origin, publicOrigin)) {
     res.status(403).json({ error: "Host or origin is not allowed." });
@@ -73,9 +86,137 @@ app.get("/healthz", (_, res) => {
   res.json({ ok: true });
 });
 app.use(express.json({ limit: "100kb" }));
-app.get("/api/state", (_, res) =>
-  res.json({ creators: creators(), posts: posts().filter((p) => !p.removed) }),
-);
+installAuth(app, db, !!publicOrigin);
+function state() {
+  return {
+    creators: creators(),
+    posts: posts().filter((p) => !p.removed),
+    playlists: db
+      .prepare("SELECT data FROM playlists WHERE user_id=?")
+      .all(owner())
+      .map((r) => JSON.parse(r.data as string)),
+  };
+}
+app.get("/api/state", (_, res) => {
+  prunePosts(owner());
+  res.json(state());
+});
+function storeLibraryPost(p: Post, linked: boolean, playlistId?: string) {
+  const row = db
+    .prepare("SELECT data FROM posts WHERE user_id=? AND id=?")
+    .get(owner(), p.id);
+  const previous: Post | undefined = row
+    ? JSON.parse(row.data as string)
+    : undefined;
+  savePost({
+    ...previous,
+    ...p,
+    creatorId: previous?.creatorId || p.creatorId,
+    libraryOnly: previous ? !!previous.libraryOnly : true,
+    read: previous?.read || false,
+    saved: previous?.saved || false,
+    notes: previous?.notes,
+    published: p.published || previous?.published || "",
+    ...(previous?.textExpanded &&
+    (previous.text?.length || 0) > (p.text?.length || 0)
+      ? {
+          text: previous.text,
+          title: previous.title,
+          textExpanded: true,
+          textVersion: previous.textVersion,
+          textTruncated: false,
+        }
+      : {}),
+    removed: false,
+    linked: linked || previous?.linked,
+    playlistIds: [
+      ...new Set([
+        ...(previous?.playlistIds || []),
+        ...(playlistId ? [playlistId] : []),
+      ]),
+    ],
+  });
+}
+app.post("/api/links", async (req, res) => {
+  const { post, name } = await importLink(String(req.body?.url || ""));
+  post.creatorId = `library:${post.platform}:${post.sourceUsername || name}`;
+  if (!creators().some((c) => c.id === post.creatorId))
+    saveCreator({
+      id: post.creatorId,
+      name,
+      avatar: "",
+      tags: [],
+      accounts: [],
+      libraryOnly: true,
+    });
+  storeLibraryPost(post, true);
+  res.json(state());
+});
+function removePlaylistMembership(p: Post, id: string) {
+  p.playlistIds = p.playlistIds?.filter((value) => value !== id);
+  if (
+    p.libraryOnly &&
+    !p.playlistIds?.length &&
+    !p.linked &&
+    !p.saved &&
+    !p.notes?.trim()
+  )
+    db.prepare("DELETE FROM posts WHERE user_id=? AND id=?").run(owner(), p.id);
+  else savePost(p);
+}
+app.post("/api/playlists", async (req, res) => {
+  const result = await importPlaylist(String(req.body?.url || ""));
+  const oldRow = db
+    .prepare("SELECT data FROM playlists WHERE user_id=? AND id=?")
+    .get(owner(), result.playlist.id);
+  const oldIds: string[] = oldRow
+    ? JSON.parse(oldRow.data as string).postIds
+    : [];
+  if (result.playlist.warning)
+    result.playlist.postIds = [
+      ...new Set([...result.playlist.postIds, ...oldIds]),
+    ];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    saveCreator({
+      id: `playlist:${result.playlist.id}`,
+      name: result.playlist.title,
+      avatar: "",
+      tags: [],
+      accounts: [],
+      libraryOnly: true,
+    });
+    for (const p of result.posts)
+      storeLibraryPost(p, false, result.playlist.id);
+    if (!result.playlist.warning)
+      for (const p of posts())
+        if (
+          p.playlistIds?.includes(result.playlist.id) &&
+          !result.playlist.postIds.includes(p.id)
+        )
+          removePlaylistMembership(p, result.playlist.id);
+    db.prepare("INSERT OR REPLACE INTO playlists VALUES (?,?,?)").run(
+      owner(),
+      result.playlist.id,
+      JSON.stringify(result.playlist),
+    );
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  res.json(state());
+});
+app.delete("/api/playlists/:id", (req, res) => {
+  db.prepare("DELETE FROM playlists WHERE user_id=? AND id=?").run(
+    owner(),
+    req.params.id,
+  );
+  for (const p of posts())
+    if (p.playlistIds?.includes(req.params.id))
+      removePlaylistMembership(p, req.params.id);
+  res.json(state());
+});
 app.post("/api/creators", async (req, res, next) => {
   try {
     const platform = ["x", "instagram", "tiktok"].includes(req.body.platform)
@@ -271,17 +412,31 @@ app.patch("/api/creators/:id", async (req, res) => {
   res.json(c);
 });
 app.delete("/api/creators/:id", (req, res) => {
-  db.prepare("DELETE FROM posts WHERE creator_id=?").run(req.params.id);
-  db.prepare("DELETE FROM creators WHERE id=?").run(req.params.id);
+  for (const p of posts().filter((p) => p.creatorId === req.params.id)) {
+    if (p.linked || p.playlistIds?.length) {
+      const id = `library:retained:${req.params.id}`;
+      const c = creators().find((c) => c.id === req.params.id);
+      if (c) saveCreator({ ...c, id, accounts: [], libraryOnly: true });
+      savePost({ ...p, creatorId: id, libraryOnly: true });
+    } else
+      db.prepare("DELETE FROM posts WHERE user_id=? AND id=?").run(
+        owner(),
+        p.id,
+      );
+  }
+  db.prepare("DELETE FROM creators WHERE user_id=? AND id=?").run(
+    owner(),
+    req.params.id,
+  );
   res.json({ ok: true });
 });
-let syncing = false;
+const syncing = new Set<string>();
 app.post("/api/sync", async (_, res) => {
-  if (syncing) {
+  if (syncing.has(owner())) {
     res.status(409).json({ error: "A refresh is already in progress." });
     return;
   }
-  syncing = true;
+  syncing.add(owner());
   try {
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
@@ -339,12 +494,15 @@ app.post("/api/sync", async (_, res) => {
               saved: prev?.saved || false,
               notes: prev?.notes || "",
               removed: prev?.removed,
+              linked: prev?.linked,
+              playlistIds: prev?.playlistIds,
               ...(prev?.textExpanded &&
               (prev.text?.length || 0) >= (p.text?.length || 0)
                 ? {
                     text: prev.text,
                     title: prev.title,
                     textExpanded: true,
+                    textVersion: prev.textVersion,
                     textTruncated: false,
                   }
                 : {}),
@@ -386,19 +544,16 @@ app.post("/api/sync", async (_, res) => {
         }
       }
     }
-    prunePosts();
-    res.json({
-      creators: creators(),
-      posts: posts().filter((p) => !p.removed),
-    });
+    prunePosts(owner());
+    res.json(state());
   } finally {
-    syncing = false;
+    syncing.delete(owner());
   }
 });
 app.get("/api/posts/:id/video/:index", async (req, res) => {
   const row = db
-    .prepare("SELECT data FROM posts WHERE id = ?")
-    .get(req.params.id);
+    .prepare("SELECT data FROM posts WHERE user_id=? AND id = ?")
+    .get(owner(), req.params.id);
   const url = xVideoUrl(
     row ? JSON.parse(row.data as string) : undefined,
     req.params.index,
@@ -427,6 +582,7 @@ app.get("/api/posts/:id/detail", async (req, res) => {
     title: expanded.title,
     textTruncated: expanded.textTruncated,
     textExpanded: expanded.textExpanded,
+    textVersion: expanded.textVersion,
   };
   savePost(updated);
   res.json(updated);

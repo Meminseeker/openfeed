@@ -2,6 +2,49 @@
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
+  if (url.startsWith("https://api.fxtwitter.com/"))
+    return Response.json({
+      code: 200,
+      tweet: {
+        id: new URL(url).pathname.split("/").at(-1),
+        text: "Complete public post. ".repeat(30),
+        created_timestamp: 1600000000,
+        author: { screen_name: "test", name: "Test" },
+      },
+    });
+  if (url.startsWith("https://www.youtube.com/oembed"))
+    return Response.json({
+      title: "A shared video",
+      author_name: "Library author",
+    });
+  if (url.startsWith("https://www.youtube.com/playlist"))
+    return new Response(
+      "var ytInitialData = " +
+        JSON.stringify({
+          metadata: { playlistMetadataRenderer: { title: "Test playlist" } },
+          contents: {
+            playlistVideoRenderer: {
+              videoId: "abcdefghijk",
+              title: { simpleText: "Old first video" },
+              isPlayable: true,
+            },
+            continuationItemRenderer: {
+              continuationEndpoint: {
+                continuationCommand: { token: "next-page" },
+              },
+            },
+          },
+        }) +
+        ";",
+    );
+  if (url.startsWith("https://www.youtube.com/youtubei/v1/browse"))
+    return Response.json({
+      playlistVideoRenderer: {
+        videoId: "lmnopqrstuv",
+        title: { simpleText: "Second video" },
+        isPlayable: true,
+      },
+    });
   if (url.startsWith("https://www.tiktok.com/embed/@")) {
     const path = new URL(url).pathname;
     return new Response(

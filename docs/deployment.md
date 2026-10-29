@@ -1,8 +1,18 @@
 # Deploy OpenFeed on DigitalOcean
 
-This setup runs one OpenFeed instance behind Caddy at **https://openfeed.meminseeker.com**. Caddy requires a password for every application request and manages TLS certificates. The app has no published host port. SQLite and Caddy certificates live in persistent Docker volumes. No CI/CD, managed database, or Kubernetes is required.
+This setup runs one OpenFeed instance behind Caddy at **https://openfeed.meminseeker.com**. Caddy manages TLS certificates; the application provides individual account signup and login. The app has no published host port. SQLite and Caddy certificates live in persistent Docker volumes. No CI/CD, managed database, or Kubernetes is required.
 
-This is a **shared personal workspace**. Everyone with access can see and edit the same creators, notes, saved posts, and read state. Browser drafts remain device-local; wait for notes to save before switching devices. Password protection does not add separate user accounts. Only invite friends if this sharing is acceptable.
+Each account has separate creators, content, notes, read state, playlists and links. Browser drafts are account-scoped and device-local; wait for notes to save before switching devices. Public icons and the manifest are intentionally accessible without login. API and media access require a session.
+
+## Upgrade an existing workspace
+
+1. Back up the database volume using the procedure below before starting the new version. The schema migration is transactional but older versions cannot read the new tables; rollback requires restoring the backup.
+2. In `.env`, set `OPENFEED_SETUP_TOKEN` to a long random secret (generate one with `openssl rand -hex 32`). Set `OPENFEED_RETENTION_DAYS=7` explicitly if your old `.env` still says 90.
+3. Deploy **both** the app and the updated `deploy/Caddyfile`/Compose configuration. The old HTTP Basic Auth gate is replaced by application login. Do not keep a Basic Auth gate in front of the icons or manifest.
+4. Open the app, choose **Create an account**, and enter the setup token. That account atomically claims all existing creators, posts, saved items and notes. Until a correct token is provided, signup is blocked and the legacy data is not pruned. After claiming, the configured retention applies to unsaved/unannotated feed items.
+5. Remove `OPENFEED_SETUP_TOKEN` from `.env` and recreate the app. Friends can now sign up for their own empty workspaces. The old `OPENFEED_AUTH_USER` and `OPENFEED_AUTH_HASH` variables are no longer used.
+
+Fresh, empty installations do not require a setup token. Login sessions last 30 days and logout revokes the current session. Password-reset email is not implemented; use a password manager. Keep the application port private behind Caddy. Production trusts exactly one proxy for the client IP used in login rate limits; never expose port 3000 directly.
 
 ## Size and cost
 
@@ -11,12 +21,12 @@ These are starting estimates, not measured capacity guarantees:
 | Use                               | CPU    | RAM   | SSD    | Notes                                                                                |
 | --------------------------------- | ------ | ----- | ------ | ------------------------------------------------------------------------------------ |
 | Minimum for light personal use    | 1 vCPU | 1 GiB | 25 GiB | Add 1–2 GiB swap; image builds may run out of memory. Build elsewhere if necessary. |
-| Recommended starting Droplet      | 1 vCPU | 2 GiB | 50 GiB | Better headroom for builds and a few friends sharing this workspace.                 |
+| Recommended starting Droplet      | 1 vCPU | 2 GiB | 50 GiB | Better headroom for builds and a few friends with separate workspaces.                 |
 | Grow when measurements justify it | 2 vCPU | 4 GiB | 80 GiB | Large feeds, heavier refreshes, or simultaneous video playback.                      |
 
 Use a Basic Droplet with Ubuntu 24.04 LTS, in a region near you. Standard shared CPU is sufficient to start. DigitalOcean currently lists the 2 GiB / 1 vCPU / 50 GiB Basic plan at **US$12/month**; confirm at checkout. Backups, taxes, optional platform API usage, and excess transfer are additional. See [Droplet pricing](https://www.digitalocean.com/pricing/droplets) (checked October 6, 2026).
 
-Media mostly loads from upstream CDNs. X video streams through this server, using outbound bandwidth. The app reads the whole feed from SQLite into memory; database size and peak memory increase with retained posts. There is no automatic retention policy. Monitor `docker stats`, `df -h`, and `docker system df`; upgrade before the disk fills. Public platform endpoints may block datacenter IPs, so cloud ingestion can behave differently from your laptop. The UI reports source failures; official APIs are optional and may cost money.
+Media mostly loads from upstream CDNs. X video streams through this server, using outbound bandwidth. The app reads the whole feed from SQLite into memory; database size and peak memory increase with retained posts. Unsaved feed posts without notes expire after seven days by default. Playlist items and links are exempt. Monitor `docker stats`, `df -h`, and `docker system df`; upgrade before the disk fills. Public platform endpoints may block datacenter IPs, so cloud ingestion can behave differently from your laptop. The UI reports source failures; official APIs are optional and may cost money.
 
 ## 1. Create the server and DNS
 
@@ -46,27 +56,25 @@ Commands below use `sudo docker` so you do not need to grant a user Docker-group
 Clone your repository on the server, or copy the source using SSH. Do not copy local `node_modules`, `dist`, or secrets into the image. For example, after replacing the repository URL:
 
 ```sh
-git clone YOUR_REPOSITORY_URL openfeed
+git clone --branch dev YOUR_REPOSITORY_URL openfeed
 cd openfeed
 cp .env.example .env
 chmod 600 .env
-sudo docker run --rm -it caddy:2-alpine caddy hash-password
 ```
 
-The last command prompts for a strong password and prints a bcrypt hash. Edit `.env` with:
+Edit `.env` with:
 
 ```dotenv
 OPENFEED_DOMAIN=openfeed.meminseeker.com
 ACME_EMAIL=YOUR_REAL_EMAIL
-OPENFEED_AUTH_USER=alvin
-OPENFEED_AUTH_HASH='$2a$YOUR_COMPLETE_GENERATED_HASH'
+OPENFEED_RETENTION_DAYS=7
+# Only needed when upgrading an existing workspace:
+OPENFEED_SETUP_TOKEN=YOUR_RANDOM_SECRET
 ```
 
-Use the complete generated hash, **inside single quotes**. Compose otherwise interprets the dollar signs. Do not use the example placeholder. Save the password in your password manager. `.env` is ignored by Git and excluded from the Docker build context. Keep it private; `docker compose config` without `--quiet` may print resolved credentials. Docker administrators can inspect container environment variables.
+`.env` is ignored by Git and excluded from the Docker build context. Keep it private; `docker compose config` without `--quiet` may print resolved credentials. Docker administrators can inspect container environment variables.
 
 Optional X/Instagram variables in `.env` match the integration configuration in the [README](../README.md). They stay server-side. Leave them blank for public-page mode. Set all three Instagram variables together when using Business Discovery.
-
-The password prompt works in desktop and mobile browsers. For friends, you can add a separate `username bcrypt_hash` line inside `basic_auth` in `deploy/Caddyfile`, then recreate Caddy. These still grant access to the same workspace. Basic authentication has no application logout or built-in rate limiting; browsers can remember credentials until closed. For stronger personal access control, place an identity-aware gateway or private VPN in front later.
 
 ## 3. Build and start
 
@@ -80,18 +88,21 @@ sudo docker compose ps
 sudo docker compose logs --tail=100 app caddy
 ```
 
-Open **https://openfeed.meminseeker.com** on your laptop or phone and enter your credentials. Caddy obtains and renews certificates, redirects HTTP to HTTPS, and protects the UI, API, and video proxy. Its certificate state is persisted. See [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) and [password authentication](https://caddyserver.com/docs/caddyfile/directives/basic_auth).
+Open **https://openfeed.meminseeker.com** and create your account. For an upgrade, follow the workspace claim steps above. Caddy obtains and renews certificates and redirects HTTP to HTTPS. Its certificate state is persisted. See [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https).
 
-Check that an unauthenticated HTTPS request returns **401**, then check authenticated access (curl prompts for the password):
+Check public installation assets and protected data separately:
 
 ```sh
-curl -I https://openfeed.meminseeker.com
-curl --user alvin https://openfeed.meminseeker.com/healthz
+curl -I https://openfeed.meminseeker.com/icons/app-192.png
+curl https://openfeed.meminseeker.com/healthz
+curl -i https://openfeed.meminseeker.com/api/state
 ```
 
-The authenticated health response should be `{"ok":true}`. Add a creator, refresh, save a note, restart the app with `sudo docker compose restart app`, and verify persistence. Test video playback and note saving from your phone. If certificates fail, check DNS A/AAAA, firewall ports, and Caddy logs. If requests return 403, ensure `.env` uses only the hostname and you are visiting that exact domain. The server validates the configured HTTPS origin directly; it does not trust arbitrary forwarded headers.
+The icon should return **200** with an image content type, health should return `{"ok":true}`, and unauthenticated state should return **401**. Add a creator, save a note, restart the app, and verify persistence. Sign up a second account and confirm it has an empty workspace. Test playback and notes from your phone. If an existing installed icon still shows “O”, remove and reinstall the home-screen app after updating.
 
-The app runs as the non-root `node` user with a read-only container filesystem, writes only to its data volume and temporary directory, and uses Node 24's native TypeScript support. Its production image contains no build/dev dependencies. The container health check probes the app directly; external monitoring should probe through authenticated HTTPS too. Restart policies recover process exits and host restarts; an unhealthy running container is not automatically restarted by Compose.
+If certificates fail, check DNS A/AAAA, firewall ports, and Caddy logs. For 403 responses, ensure `.env` contains only the hostname and you visit that exact HTTPS domain. The server validates the configured origin directly.
+
+The app runs as the non-root `node` user with a read-only container filesystem, writes only to its data volume and temporary directory, and uses Node 24's native TypeScript support. Its production image contains no build/dev dependencies. The container health check probes the app directly; external monitoring can probe the public HTTPS health endpoint. Restart policies recover process exits and host restarts; an unhealthy running container is not automatically restarted by Compose.
 
 ## 4. Move existing local data (optional)
 
@@ -151,7 +162,8 @@ Before updating, record the current commit and back up data. Keep the working tr
 
 ```sh
 git rev-parse HEAD
-git pull --ff-only
+git switch dev
+git pull --ff-only origin dev
 sudo docker compose build --pull
 sudo docker compose up -d
 sudo docker compose ps
@@ -164,4 +176,4 @@ To roll back, check out the previously recorded commit, build it, and run `up -d
 
 ## Path to a product
 
-This deployment is a useful starting point for a private service. Before selling access, add application accounts, secure sessions, password reset or managed identity, authorization and per-user data ownership; sharing proxy passwords is insufficient for customer isolation. Add rate limits, abuse controls, observable background refresh jobs, retention/export/delete policies, and automated backup restore checks. Review platform API terms and usage costs. SQLite is suitable for this single instance; decide whether to move to PostgreSQL based on actual multi-user/concurrency needs. Never scale replicas against this local SQLite volume. Start release versioning and database migration discipline before schema changes; CI/CD can wait until it provides value.
+This deployment is a useful starting point for a private service. Before selling access, add password reset or managed identity, further abuse controls, observable background refresh jobs, export/account deletion, and automated backup restore checks. Individual accounts, secure sessions, API ownership checks and basic authentication rate limiting are already provided. Review platform API terms and usage costs. SQLite is suitable for this single instance; decide whether to move to PostgreSQL based on actual multi-user/concurrency needs. Never scale replicas against this local SQLite volume. Start release versioning and database migration discipline before schema changes; CI/CD can wait until it provides value.

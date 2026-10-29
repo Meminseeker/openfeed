@@ -208,7 +208,7 @@ function pageProfile(html: string, username: string) {
   return { user, media };
 }
 // Detail enrichment is limited to a shortcode already listed by the approved profile.
-function pagePost(html: string, shortcode: string) {
+export function pagePost(html: string, shortcode: string) {
   let media: any;
   let privateMedia = false;
   function walk(value: any, depth = 0) {
@@ -220,7 +220,10 @@ function pagePost(html: string, shortcode: string) {
       return;
     }
     if (!value || typeof value !== "object") return;
-    const candidate = value.shortcode_media;
+    const candidate =
+      value.shortcode_media ||
+      value.xdt_shortcode_media ||
+      (value.shortcode === shortcode ? value : undefined);
     if (candidate?.shortcode === shortcode) {
       if (candidate.owner?.is_private) privateMedia = true;
       media = candidate;

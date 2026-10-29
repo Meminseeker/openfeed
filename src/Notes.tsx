@@ -1,18 +1,18 @@
 import { useState, useRef, useEffect } from "react";
 import { StickyNote, Clock, Save } from "lucide-react";
-import { writeNotes } from "./api";
+import { writeNotes, activeAccount } from "./api";
 import { timestamp, noteTimestamps } from "./viewer-shortcuts";
 import type { Post } from "./types";
 function localDraft(id: string) {
   try {
-    return localStorage.getItem(`openfeed.notes.${id}`);
+    return localStorage.getItem(id);
   } catch {
     return null;
   }
 }
 function storeDraft(id: string, text: string) {
   try {
-    localStorage.setItem(`openfeed.notes.${id}`, text);
+    localStorage.setItem(id, text);
   } catch {}
 }
 export function Notes({
@@ -26,8 +26,12 @@ export function Notes({
   currentTime?: () => number;
   seek?: (seconds: number) => void;
 }) {
+  const account = useRef(activeAccount()).current;
+  const draftKey = useRef(
+    `openfeed.notes.${activeAccount()}.${post.id}`,
+  ).current;
   const [draft, setDraft] = useState(
-      () => localDraft(post.id) ?? post.notes ?? "",
+      () => localDraft(draftKey) ?? post.notes ?? "",
     ),
     [status, setStatus] = useState("Saved"),
     [error, setError] = useState("");
@@ -48,12 +52,12 @@ export function Notes({
       setError("");
     }
     try {
-      await writeNotes(post.id, snapshot);
+      await writeNotes(post.id, snapshot, account);
       saved.current = snapshot;
       callback.current(post.id, snapshot);
-      if (localDraft(post.id) === snapshot) {
+      if (localDraft(draftKey) === snapshot) {
         try {
-          localStorage.removeItem(`openfeed.notes.${post.id}`);
+          localStorage.removeItem(draftKey);
         } catch {}
       }
       if (mounted.current && latest.current === snapshot) setStatus("Saved");
@@ -70,7 +74,7 @@ export function Notes({
     value = value.slice(0, 50000);
     latest.current = value;
     setDraft(value);
-    storeDraft(post.id, value);
+    storeDraft(draftKey, value);
     setStatus("Unsaved");
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 600);
@@ -81,7 +85,7 @@ export function Notes({
       setStatus("Unsaved");
       timer.current = setTimeout(() => void flush(), 600);
     }
-    const unloading = () => storeDraft(post.id, latest.current);
+    const unloading = () => storeDraft(draftKey, latest.current);
     window.addEventListener("pagehide", unloading);
     return () => {
       mounted.current = false;

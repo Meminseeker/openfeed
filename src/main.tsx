@@ -1,5 +1,8 @@
+import { AuthGate } from "./AuthGate";
+import { LibraryView } from "./LibraryView";
 import { postLabel } from "./post-label";
 import {
+  matchesFeedFilters,
   timeRanges,
   inTimeRange,
   selectedCreators,
@@ -43,7 +46,7 @@ import "@fontsource/dm-sans/600.css";
 import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
-function App() {
+function App({ username, logout }: { username: string; logout: () => void }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => tick((n) => n + 1), 60000);
@@ -109,8 +112,9 @@ function App() {
       setError((e as Error).message);
     }
   };
-  const tags = [...new Set(state.creators.flatMap((c) => c.tags))].sort();
-  const eligibleCreators = topicCreators(state.creators, tag);
+  const followed = state.creators.filter((c) => !c.libraryOnly);
+  const tags = [...new Set(followed.flatMap((c) => c.tags))].sort();
+  const eligibleCreators = topicCreators(followed, tag);
   useEffect(() => {
     setCreatorFilter(null);
   }, [tag]);
@@ -118,6 +122,7 @@ function App() {
   const unreadInTopic = (topic: string) =>
     state.posts.filter(
       (p) =>
+        !p.libraryOnly &&
         !p.read &&
         inTimeRange(p, timeRange) &&
         state.creators.some(
@@ -139,23 +144,18 @@ function App() {
       setError((e as Error).message);
     }
   };
+  const feedSelection = {
+    page,
+    tag,
+    query,
+    types,
+    selection,
+    timeRange,
+    unread,
+    allCreators: creatorFilter === null,
+  };
   const visible = state.posts
-    .filter((p) => {
-      const c = state.creators.find((c) => c.id === p.creatorId);
-      return (
-        c &&
-        (page !== "saved" || p.saved) &&
-        (page !== "noted" || !!p.notes?.trim()) &&
-        (tag === "All topics" || c.tags.includes(tag)) &&
-        (!types.length || types.includes(contentFilterKey(p))) &&
-        selection.includes(c.id) &&
-        inTimeRange(p, timeRange) &&
-        (!unread || !p.read) &&
-        `${p.title} ${p.text || ""} ${c.name}`
-          .toLowerCase()
-          .includes(query.toLowerCase())
-      );
-    })
+    .filter((p) => matchesFeedFilters(p, state.creators, feedSelection))
     .sort((a, b) => b.published.localeCompare(a.published));
   const viewPost = (p: Post) => {
     setViewerIds(visible.map((item) => item.id));
@@ -164,7 +164,11 @@ function App() {
   };
   const viewerPost = state.posts.find((p) => p.id === viewerIds[viewerIndex]);
   useEffect(() => {
-    if (viewerPost?.platform !== "x" || viewerPost.textExpanded) return;
+    if (
+      viewerPost?.platform !== "x" ||
+      (viewerPost.textExpanded && viewerPost.textVersion === 2)
+    )
+      return;
     const id = viewerPost.id;
     void api(`posts/${encodeURIComponent(id)}/detail`)
       .then((detail) => {
@@ -178,6 +182,7 @@ function App() {
                   title: detail.title,
                   textTruncated: detail.textTruncated,
                   textExpanded: detail.textExpanded,
+                  textVersion: detail.textVersion,
                 }
               : item,
           ),
@@ -223,6 +228,8 @@ function App() {
             ["creators", Users, "Creators"],
             ["saved", Bookmark, "Saved for later"],
             ["noted", NotebookPen, "Noted down"],
+            ["playlists", Play, "Playlists"],
+            ["links", ArrowUpRight, "Links"],
           ].map(([id, Icon, label]) => (
             <button
               key={id as string}
@@ -233,13 +240,16 @@ function App() {
               {label as string}
               {id === "feed" && (
                 <span className="count">
-                  {state.posts.filter((p) => !p.read).length}
+                  {state.posts.filter((p) => !p.libraryOnly && !p.read).length}
                 </span>
               )}
             </button>
           ))}
         </nav>
         <InstallApp />
+        <button className="nav" onClick={logout}>
+          Log out · {username}
+        </button>
         <div className="topic-heading">
           YOUR TOPICS <span>{tags.length}</span>
         </div>
@@ -281,9 +291,10 @@ function App() {
             </p>
           </div>
           <div className="profile">
-            <span>A</span>
+            <span>{username.slice(0, 1).toUpperCase()}</span>
             <div>
-              My workspace<small>Local · Private by design</small>
+              {username}
+              <small>Your personal workspace</small>
             </div>
             <span className="online" />
           </div>
@@ -307,7 +318,11 @@ function App() {
                   ? "Saved for later"
                   : page === "noted"
                     ? "Noted down"
-                    : "Your feed"}
+                    : page === "playlists"
+                      ? "Playlists"
+                      : page === "links"
+                        ? "Links"
+                        : "Your feed"}
             </strong>
           </div>
           <div className="header-right">
@@ -316,7 +331,7 @@ function App() {
               Personal space
             </span>
             <button className="avatar" onClick={() => navigate("creators")}>
-              A
+              {username.slice(0, 1).toUpperCase()}
             </button>
           </div>
         </header>
@@ -331,9 +346,13 @@ function App() {
                     ? "For a quieter moment."
                     : page === "noted"
                       ? "Noted down."
-                      : tag === "All topics"
-                        ? "A feed that feels like yours."
-                        : `${tag}, on your terms.`}
+                      : page === "playlists"
+                        ? "One collection at a time."
+                        : page === "links"
+                          ? "A place for the links you find."
+                          : tag === "All topics"
+                            ? "A feed that feels like yours."
+                            : `${tag}, on your terms.`}
               </h1>
               <p>
                 {page === "creators"
@@ -342,19 +361,25 @@ function App() {
                     ? "The things you wanted to come back to."
                     : page === "noted"
                       ? "The content you have written notes on."
-                      : "Stay in the loop with the people you follow. Leave the noise behind."}
+                      : page === "playlists"
+                        ? "Your collections, ready when you are."
+                        : page === "links"
+                          ? "Keep what catches your attention."
+                          : "Stay in the loop with the people you follow. Leave the noise behind."}
               </p>
             </div>
-            <button
-              className="primary"
-              onClick={() => {
-                setEditing(null);
-                setModal(true);
-              }}
-            >
-              <Plus size={17} />
-              Add creator
-            </button>
+            {!["links", "playlists"].includes(page) && (
+              <button
+                className="primary"
+                onClick={() => {
+                  setEditing(null);
+                  setModal(true);
+                }}
+              >
+                <Plus size={17} />
+                Add creator
+              </button>
+            )}
           </div>
           {error && (
             <div className="error" role="alert">
@@ -364,16 +389,37 @@ function App() {
               </button>
             </div>
           )}
-          {page === "creators" ? (
+          {["playlists", "links"].includes(page) ? (
+            <LibraryView
+              page={page}
+              state={state}
+              update={setState}
+              open={(post, items) => {
+                setViewerIds(items.map((p) => p.id));
+                setViewerIndex(items.findIndex((p) => p.id === post.id));
+                if (!post.read) void mutate(post, "read");
+              }}
+              render={(p, open) => (
+                <PostCard
+                  key={p.id}
+                  p={p}
+                  c={state.creators.find((c) => c.id === p.creatorId)!}
+                  mutate={mutate}
+                  remove={() => void removePost(p)}
+                  open={open}
+                />
+              )}
+            />
+          ) : page === "creators" ? (
             <>
               <div className="section-top">
                 <h2>
-                  Your creators <span>{state.creators.length}</span>
+                  Your creators <span>{followed.length}</span>
                 </h2>
                 <span>YouTube, X, Instagram & TikTok</span>
               </div>
               <div className="creator-grid">
-                {state.creators.map((c) => (
+                {followed.map((c) => (
                   <button
                     key={c.id}
                     className="creator-card"
@@ -405,7 +451,7 @@ function App() {
                   </button>
                 ))}
               </div>
-              {!state.creators.length && !loading && (
+              {!followed.length && !loading && (
                 <Empty
                   title="Start with someone you love following."
                   text="Add a YouTube, X, Instagram or TikTok creator, give them a few topics, and make this space your own."
@@ -442,7 +488,7 @@ function App() {
                     )}
                   </button>
                   <button
-                    disabled={busy || !state.creators.length}
+                    disabled={busy || !followed.length}
                     onClick={() => void refresh()}
                   >
                     <RefreshCw size={16} className={busy ? "spin" : ""} />
@@ -530,7 +576,22 @@ function App() {
                           )
                         }
                       >
-                        {v}
+                        {v}{" "}
+                        <span className="count">
+                          {
+                            state.posts.filter(
+                              (p) =>
+                                !p.read &&
+                                contentFilterKey(p) === k &&
+                                matchesFeedFilters(
+                                  p,
+                                  state.creators,
+                                  feedSelection,
+                                  true,
+                                ),
+                            ).length
+                          }
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -551,6 +612,9 @@ function App() {
                       onClick={() => setCreatorFilter(null)}
                     >
                       All creators in this topic
+                    </button>
+                    <button type="button" onClick={() => setCreatorFilter([])}>
+                      Unselect all creators
                     </button>
                     <div className="creator-options">
                       {eligibleCreators.map((c) => (
@@ -624,24 +688,22 @@ function App() {
               ) : !visible.length ? (
                 <Empty
                   title={
-                    state.creators.length
+                    followed.length
                       ? "Nothing here just yet."
                       : "Your feed starts with a person."
                   }
                   text={
-                    state.creators.length
+                    followed.length
                       ? "Refresh to fetch public posts, or adjust your filters."
                       : "Add your first creator. No recommendations, no endless scroll—just the people you choose."
                   }
                   action={
-                    state.creators.length
+                    followed.length
                       ? () => void refresh()
                       : () => setModal(true)
                   }
                   actionLabel={
-                    state.creators.length
-                      ? "Refresh feed"
-                      : "Add your first creator"
+                    followed.length ? "Refresh feed" : "Add your first creator"
                   }
                 />
               ) : (
@@ -1318,4 +1380,8 @@ function CreatorModal({
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <AuthGate>
+    {(username, logout) => <App username={username} logout={logout} />}
+  </AuthGate>,
+);
