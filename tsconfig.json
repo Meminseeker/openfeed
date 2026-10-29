@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
+    "erasableSyntaxOnly": true,
     "types": ["node"]
   },
   "include": ["src", "server", "tests", "vite.config.ts"]

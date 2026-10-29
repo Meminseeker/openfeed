@@ -2,11 +2,10 @@ const redirectStatuses = [301, 302, 303, 307, 308];
 const retryStatuses = [429, 500, 502, 503, 504];
 const youtubeHosts = ["youtube.com", "www.youtube.com", "m.youtube.com"];
 class PageError extends Error {
-  constructor(
-    message: string,
-    readonly retry: boolean,
-  ) {
+  readonly retry: boolean;
+  constructor(message: string, retry: boolean) {
     super(message);
+    this.retry = retry;
   }
 }
 // Redirects are checked before following them; no cookies or credentials are forwarded.
