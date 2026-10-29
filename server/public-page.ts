@@ -39,19 +39,36 @@ export async function fetchPublicPage(input: string) {
               false,
             );
           const next = new URL(location, url);
+          const publicTarget = (target: URL) =>
+            target.protocol === "https:" &&
+            !target.port &&
+            !target.username &&
+            !target.password &&
+            (youtube
+              ? youtubeHosts.includes(target.hostname)
+              : target.hostname === original.hostname) &&
+            target.pathname === original.pathname &&
+            ["list", "v", "url"].every(
+              (key) =>
+                target.searchParams.get(key) === original.searchParams.get(key),
+            );
+          let consentTarget = false;
           if (
-            next.protocol !== "https:" ||
-            next.port ||
-            next.username ||
-            next.password ||
-            !(youtube
-              ? youtubeHosts.includes(next.hostname)
-              : next.hostname === original.hostname) ||
-            (original.pathname === "/playlist" &&
-              (next.pathname !== "/playlist" ||
-                next.searchParams.get("list") !==
-                  original.searchParams.get("list")))
-          )
+            youtube &&
+            next.protocol === "https:" &&
+            next.hostname === "consent.youtube.com" &&
+            next.pathname === "/m" &&
+            !next.port &&
+            !next.username &&
+            !next.password
+          ) {
+            try {
+              consentTarget = publicTarget(
+                new URL(next.searchParams.get("continue") || ""),
+              );
+            } catch {}
+          }
+          if (!publicTarget(next) && !consentTarget)
             throw new PageError(
               `${platform} redirected away from the requested public content. It may require consent or sign-in.`,
               false,
@@ -66,6 +83,11 @@ export async function fetchPublicPage(input: string) {
             retryStatuses.includes(r.status),
           );
         }
+        if (url.hostname === "consent.youtube.com")
+          throw new PageError(
+            "YouTube requires an interactive consent choice on this server. The playlist could not be imported automatically.",
+            false,
+          );
         // Read within the retry boundary: connections can fail during the body too.
         const body = await r.arrayBuffer();
         return new Response(body, { status: r.status, headers: r.headers });

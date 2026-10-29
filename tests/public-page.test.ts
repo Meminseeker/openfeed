@@ -141,3 +141,93 @@ test("transient HTTP and interrupted response bodies are retried", async () => {
     globalThis.fetch = original;
   }
 });
+
+test("YouTube regional consent redirect returns to the exact playlist without cookies or form submission", async () => {
+  const original = globalThis.fetch;
+  const url = "https://www.youtube.com/playlist?list=PLtest123456";
+  const consent =
+    "https://consent.youtube.com/m?continue=" +
+    encodeURIComponent(url + "&cbrd=1") +
+    "&gl=DE";
+  const seen: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    seen.push(String(input));
+    assert.equal(init?.method, undefined);
+    assert.equal((init?.headers as Record<string, string>)?.Cookie, undefined);
+    if (seen.length === 1)
+      return new Response(null, {
+        status: 302,
+        headers: { location: consent },
+      });
+    if (seen.length === 2)
+      return new Response(null, {
+        status: 303,
+        headers: { location: url + "&cbrd=1&ucbcb=1" },
+      });
+    return new Response("public playlist");
+  };
+  try {
+    assert.equal(await (await fetchPublicPage(url)).text(), "public playlist");
+    assert.deepEqual(seen, [url, consent, url + "&cbrd=1&ucbcb=1"]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("consent redirects cannot swap playlists, leak to other hosts or accept an interactive consent form", async () => {
+  const original = globalThis.fetch;
+  const url = "https://www.youtube.com/playlist?list=PLtest123456";
+  try {
+    for (const target of [
+      "https://www.youtube.com/playlist?list=OTHER",
+      "https://evil.test/playlist?list=PLtest123456",
+      "http://www.youtube.com/playlist?list=PLtest123456",
+      "https://user:pass@www.youtube.com/playlist?list=PLtest123456",
+    ]) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location:
+              "https://consent.youtube.com/m?continue=" +
+              encodeURIComponent(target),
+          },
+        });
+      };
+      await assert.rejects(fetchPublicPage(url), /redirected away/);
+      assert.equal(calls, 1);
+    }
+    let calls = 0;
+    globalThis.fetch = async () =>
+      ++calls === 1
+        ? new Response(null, {
+            status: 302,
+            headers: {
+              location:
+                "https://consent.youtube.com/m?continue=" +
+                encodeURIComponent(url),
+            },
+          })
+        : new Response("<form>Consent choices</form>");
+    await assert.rejects(fetchPublicPage(url), /interactive consent/);
+    assert.equal(calls, 2);
+    calls = 0;
+    globalThis.fetch = async () =>
+      new Response(null, {
+        status: 302,
+        headers: {
+          location:
+            ++calls === 1
+              ? "https://consent.youtube.com/m?continue=" +
+                encodeURIComponent(url)
+              : "https://www.youtube.com/playlist?list=OTHER",
+        },
+      });
+    await assert.rejects(fetchPublicPage(url), /redirected away/);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
