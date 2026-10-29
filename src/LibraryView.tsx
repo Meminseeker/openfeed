@@ -1,3 +1,4 @@
+import { cleanPastedUrl } from "./clean-url";
 import { useState, useEffect, type ReactNode } from "react";
 import type { State, Post } from "./types";
 import { api } from "./api";
@@ -28,6 +29,11 @@ export function LibraryView({
           .map((id) => state.posts.find((p) => p.id === id))
           .filter((p): p is Post => !!p) || [];
   async function add(input: string) {
+    input = cleanPastedUrl(
+      input,
+      page === "playlists" ? "playlist" : "content",
+    );
+    setUrl(input);
     setBusy(true);
     setError("");
     try {
@@ -65,6 +71,26 @@ export function LibraryView({
           value={url}
           placeholder="https://…"
           onChange={(e) => setUrl(e.target.value)}
+          onBlur={() =>
+            setUrl(
+              cleanPastedUrl(
+                url,
+                page === "playlists" ? "playlist" : "content",
+              ),
+            )
+          }
+          onPaste={(e) => {
+            const value = e.clipboardData.getData("text").trim();
+            if (/^https:\/\//i.test(value)) {
+              e.preventDefault();
+              setUrl(
+                cleanPastedUrl(
+                  value,
+                  page === "playlists" ? "playlist" : "content",
+                ),
+              );
+            }
+          }}
         />
         <button className="primary" disabled={busy}>
           {busy

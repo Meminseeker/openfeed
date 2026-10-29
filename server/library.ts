@@ -1,3 +1,5 @@
+import { cleanPastedUrl } from "../src/clean-url.ts";
+import { fetchPublicPage as page } from "./public-page.ts";
 import { initialData, publicPosts } from "./youtube.ts";
 import { fetchXStatus } from "./x.ts";
 import { pagePost, instagramPosts } from "./instagram.ts";
@@ -78,23 +80,8 @@ export function contentUrl(input: string) {
     "Use a public YouTube video, X post, Instagram post/Reel, or TikTok video link.",
   );
 }
-async function page(url: string) {
-  const r = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    signal: AbortSignal.timeout(20000),
-    redirect: "error",
-  });
-  if (!r.ok)
-    throw new Error(
-      "The platform could not load this public content. Try again later.",
-    );
-  return r;
-}
 export async function resolveSharedUrl(input: string) {
-  let url = new URL(input.trim());
+  let url = new URL(cleanPastedUrl(input));
   // Only platform-owned shorteners may redirect, and every hop is validated.
   if (
     ["vm.tiktok.com", "vt.tiktok.com"].includes(url.hostname) ||
@@ -117,7 +104,7 @@ export async function resolveSharedUrl(input: string) {
       if (![301, 302, 303, 307, 308].includes(r.status)) break;
       const location = r.headers.get("location");
       if (!location) break;
-      url = new URL(location, url);
+      url = new URL(cleanPastedUrl(new URL(location, url).href));
     }
   }
   return contentUrl(url.href);
