@@ -1,5 +1,6 @@
+import { hourlyRefresh } from "./refresh.ts";
 import { importLink, importPlaylist } from "./library.ts";
-import { initializeAccounts, installAuth, owner } from "./auth.ts";
+import { initializeAccounts, installAuth, owner, asOwner } from "./auth.ts";
 import { syncTikTok, tiktokUsername } from "./tiktok.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
@@ -101,7 +102,12 @@ app.get("/api/state", (_, res) => {
   prunePosts(owner());
   res.json(state());
 });
-function storeLibraryPost(p: Post, linked: boolean, playlistId?: string) {
+function storeLibraryPost(
+  p: Post,
+  linked: boolean,
+  playlistId?: string,
+  preserveRemoved = false,
+) {
   const row = db
     .prepare("SELECT data FROM posts WHERE user_id=? AND id=?")
     .get(owner(), p.id);
@@ -127,8 +133,10 @@ function storeLibraryPost(p: Post, linked: boolean, playlistId?: string) {
           textTruncated: false,
         }
       : {}),
-    removed: false,
+    removed: preserveRemoved ? previous?.removed : false,
     linked: linked || previous?.linked,
+    linkedAt:
+      previous?.linkedAt || (linked ? new Date().toISOString() : undefined),
     playlistIds: [
       ...new Set([
         ...(previous?.playlistIds || []),
@@ -164,11 +172,12 @@ function removePlaylistMembership(p: Post, id: string) {
     db.prepare("DELETE FROM posts WHERE user_id=? AND id=?").run(owner(), p.id);
   else savePost(p);
 }
-app.post("/api/playlists", async (req, res) => {
-  const result = await importPlaylist(String(req.body?.url || ""));
+async function refreshPlaylist(url: string, existingOnly = false) {
+  const result = await importPlaylist(url);
   const oldRow = db
     .prepare("SELECT data FROM playlists WHERE user_id=? AND id=?")
     .get(owner(), result.playlist.id);
+  if (existingOnly && !oldRow) return;
   const oldIds: string[] = oldRow
     ? JSON.parse(oldRow.data as string).postIds
     : [];
@@ -187,7 +196,7 @@ app.post("/api/playlists", async (req, res) => {
       libraryOnly: true,
     });
     for (const p of result.posts)
-      storeLibraryPost(p, false, result.playlist.id);
+      storeLibraryPost(p, false, result.playlist.id, true);
     if (!result.playlist.warning)
       for (const p of posts())
         if (
@@ -205,6 +214,9 @@ app.post("/api/playlists", async (req, res) => {
     db.exec("ROLLBACK");
     throw e;
   }
+}
+app.post("/api/playlists", async (req, res) => {
+  await refreshPlaylist(String(req.body?.url || ""));
   res.json(state());
 });
 app.delete("/api/playlists/:id", (req, res) => {
@@ -431,11 +443,8 @@ app.delete("/api/creators/:id", (req, res) => {
   res.json({ ok: true });
 });
 const syncing = new Set<string>();
-app.post("/api/sync", async (_, res) => {
-  if (syncing.has(owner())) {
-    res.status(409).json({ error: "A refresh is already in progress." });
-    return;
-  }
+async function syncContents() {
+  if (syncing.has(owner())) return;
   syncing.add(owner());
   try {
     for (const c of creators()) {
@@ -495,6 +504,7 @@ app.post("/api/sync", async (_, res) => {
               notes: prev?.notes || "",
               removed: prev?.removed,
               linked: prev?.linked,
+              linkedAt: prev?.linkedAt,
               playlistIds: prev?.playlistIds,
               ...(prev?.textExpanded &&
               (prev.text?.length || 0) >= (p.text?.length || 0)
@@ -545,11 +555,41 @@ app.post("/api/sync", async (_, res) => {
       }
     }
     prunePosts(owner());
-    res.json(state());
   } finally {
     syncing.delete(owner());
   }
+}
+app.post("/api/sync", async (_, res) => {
+  if (syncing.has(owner())) {
+    res.status(409).json({ error: "A refresh is already in progress." });
+    return;
+  }
+  await syncContents();
+  res.json(state());
 });
+const refreshTimer = setInterval(
+  hourlyRefresh(
+    () =>
+      db
+        .prepare("SELECT id FROM users")
+        .all()
+        .map((user) => String(user.id)),
+    (id) =>
+      asOwner(id, async () => {
+        await syncContents();
+        for (const playlist of state().playlists) {
+          try {
+            await refreshPlaylist(playlist.url, true);
+          } catch (error) {
+            console.error("Automatic playlist refresh failed", error);
+          }
+        }
+      }),
+    (error) => console.error("Automatic content refresh failed", error),
+  ),
+  60 * 60 * 1000,
+);
+refreshTimer.unref();
 app.get("/api/posts/:id/video/:index", async (req, res) => {
   const row = db
     .prepare("SELECT data FROM posts WHERE user_id=? AND id = ?")

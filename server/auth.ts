@@ -11,6 +11,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Express } from "express";
 const derive = promisify(scrypt);
 const context = new AsyncLocalStorage<string>();
+export function asOwner<T>(id: string, work: () => T): T {
+  return context.run(id, work);
+}
 export function owner() {
   const id = context.getStore();
   if (!id) throw new Error("Missing account context");

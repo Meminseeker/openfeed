@@ -1,3 +1,9 @@
+import {
+  ContentOptions,
+  sortContents,
+  type ReadStatus,
+  type ContentOrder,
+} from "./ContentOptions";
 import { AuthGate } from "./AuthGate";
 import { LibraryView } from "./LibraryView";
 import { postLabel } from "./post-label";
@@ -60,7 +66,8 @@ function App({ username, logout }: { username: string; logout: () => void }) {
     [creatorFilter, setCreatorFilter] = useState<string[] | null>(null),
     [timeRange, setTimeRange] = useState<TimeRange>("All"),
     [removedPost, setRemovedPost] = useState<Post | null>(null),
-    [unread, setUnread] = useState(false),
+    [readStatus, setReadStatus] = useState<ReadStatus>("all"),
+    [order, setOrder] = useState<ContentOrder>("newest"),
     [filters, setFilters] = useState(false),
     [modal, setModal] = useState(false),
     [editing, setEditing] = useState<Creator | null>(null),
@@ -83,10 +90,17 @@ function App({ username, logout }: { username: string; logout: () => void }) {
   };
   useEffect(() => {
     void load();
+    const timer = setInterval(() => void load(), 60000);
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
   useEffect(
     () => setLimit(24),
-    [page, tag, query, types, creatorFilter, unread, timeRange],
+    [page, tag, query, types, creatorFilter, readStatus, order, timeRange],
   );
   const refresh = async () => {
     setBusy(true);
@@ -151,12 +165,16 @@ function App({ username, logout }: { username: string; logout: () => void }) {
     types,
     selection,
     timeRange,
-    unread,
+    unread: false,
+    readStatus,
     allCreators: creatorFilter === null,
   };
-  const visible = state.posts
-    .filter((p) => matchesFeedFilters(p, state.creators, feedSelection))
-    .sort((a, b) => b.published.localeCompare(a.published));
+  const visible = sortContents(
+    state.posts.filter((p) =>
+      matchesFeedFilters(p, state.creators, feedSelection),
+    ),
+    order,
+  );
   const viewPost = (p: Post) => {
     setViewerIds(visible.map((item) => item.id));
     setViewerIndex(visible.findIndex((item) => item.id === p.id));
@@ -462,20 +480,13 @@ function App({ username, logout }: { username: string; logout: () => void }) {
           ) : (
             <>
               <div className="feed-toolbar">
-                <div className="feed-tabs">
-                  <button
-                    className={!unread ? "active" : ""}
-                    onClick={() => setUnread(false)}
-                  >
-                    All posts
-                  </button>
-                  <button
-                    className={unread ? "active" : ""}
-                    onClick={() => setUnread(true)}
-                  >
-                    Unread <span>{unreadInTopic(tag)}</span>
-                  </button>
-                </div>
+                <ContentOptions
+                  unreadCount={unreadInTopic(tag)}
+                  status={readStatus}
+                  setStatus={setReadStatus}
+                  order={order}
+                  setOrder={setOrder}
+                />
                 <div className="tools">
                   <button
                     className={filters ? "filter-on" : ""}
@@ -586,7 +597,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                                 matchesFeedFilters(
                                   p,
                                   state.creators,
-                                  feedSelection,
+                                  { ...feedSelection, readStatus: "all" },
                                   true,
                                 ),
                             ).length
@@ -646,7 +657,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       setTimeRange("All");
                       setTag("All topics");
                       setQuery("");
-                      setUnread(false);
+                      setReadStatus("all");
                     }}
                   >
                     Reset filters

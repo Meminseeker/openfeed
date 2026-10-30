@@ -50,6 +50,7 @@ export interface FeedSelection {
   selection: string[];
   timeRange: TimeRange;
   unread: boolean;
+  readStatus?: "all" | "unread" | "read";
   allCreators: boolean;
 }
 export function matchesFeedFilters(
@@ -73,7 +74,9 @@ export function matchesFeedFilters(
         creator.libraryOnly &&
         filters.allCreators)) &&
     inTimeRange(post, filters.timeRange) &&
-    (!filters.unread || !post.read) &&
+    (filters.readStatus === "read"
+      ? post.read
+      : !(filters.readStatus === "unread" || filters.unread) || !post.read) &&
     `${post.title} ${post.text || ""} ${creator.name}`
       .toLowerCase()
       .includes(filters.query.toLowerCase())

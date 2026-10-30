@@ -1,3 +1,9 @@
+import {
+  ContentOptions,
+  sortContents,
+  type ReadStatus,
+  type ContentOrder,
+} from "./ContentOptions";
 import { cleanPastedUrl } from "./clean-url";
 import { useState, useEffect, type ReactNode } from "react";
 import type { State, Post } from "./types";
@@ -19,15 +25,24 @@ export function LibraryView({
     [url, setUrl] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [status, setStatus] = useState<ReadStatus>("all");
+  const [order, setOrder] = useState<ContentOrder>("newest");
   const [limit, setLimit] = useState(24);
-  useEffect(() => setLimit(24), [page, selected]);
+  useEffect(() => setLimit(24), [page, selected, status, order]);
   const playlist = state.playlists?.find((p) => p.id === selected);
-  const items =
+  const sourceItems =
     page === "links"
       ? state.posts.filter((p) => p.linked)
       : playlist?.postIds
           .map((id) => state.posts.find((p) => p.id === id))
           .filter((p): p is Post => !!p) || [];
+  const items = sortContents(
+    sourceItems.filter(
+      (p) => status === "all" || (status === "read" ? p.read : !p.read),
+    ),
+    order,
+    page === "links",
+  );
   async function add(input: string) {
     input = cleanPastedUrl(
       input,
@@ -145,6 +160,19 @@ export function LibraryView({
       {page === "playlists" && playlist?.warning && (
         <p className="warning">{playlist.warning}</p>
       )}
+      <ContentOptions
+        unreadCount={sourceItems.filter((p) => !p.read).length}
+        status={status}
+        setStatus={setStatus}
+        order={order}
+        setOrder={setOrder}
+      />
+      {items.some((p) => !(page === "links" ? p.linkedAt : p.published)) && (
+        <p className="muted">
+          Items without a known {page === "links" ? "addition" : "publication"}{" "}
+          date appear last, in their original order.
+        </p>
+      )}
       <div className="post-grid">
         {items.slice(0, limit).map((p) => render(p, () => open(p, items)))}
       </div>
@@ -156,7 +184,9 @@ export function LibraryView({
       {!items.length && (
         <div className="empty">
           {page === "playlists"
-            ? "Add or select a playlist to see its videos."
+            ? playlist
+              ? "No videos match this filter."
+              : "Add or select a playlist to see its videos."
             : "Links you add will appear here."}
         </div>
       )}

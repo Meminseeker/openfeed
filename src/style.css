@@ -2209,3 +2209,20 @@ kbd {
     padding: 20px;
   }
 }
+
+.content-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.content-options select {
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid #dce1d4;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}

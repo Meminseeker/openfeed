@@ -60,6 +60,7 @@ export interface Post {
   duration?: string;
   libraryOnly?: boolean;
   linked?: boolean;
+  linkedAt?: string;
   playlistIds?: string[];
   removed?: boolean;
   textTruncated?: boolean;

@@ -142,3 +142,13 @@ Usernames are case-insensitive, 3–40 letters/numbers/dots/dashes/underscores. 
 Pasted library URLs are cleaned in the input field and before import: only the video or playlist identifier is retained; sharing/tracking parameters and fragments are removed. Public-page imports retry transient connection, response-body and HTTP failures up to three times. Redirects are checked before following them, and playlist redirects must retain the same playlist ID. Connection failures identify the platform and, when available, the network error code; persistent failures on a deployed server require checking its outbound network/DNS access or upstream restrictions.
 
 YouTube regional redirects through `consent.youtube.com/m` are allowed only when their `continue` URL identifies the exact requested public content, and the return redirect is checked again. The importer follows the automatic redirect only; it sends no consent cookies, submits no forms, and reports an error if YouTube requires an interactive choice.
+
+Content views support All posts, Unread, and Read filters and newest/oldest sorting.
+Links use their first addition date, recorded for newly added links. Items without
+known dates (including older links and some YouTube playlist videos) appear last
+in their original order. Re-importing a link keeps its original addition date.
+
+The server refreshes each account's creator sources and playlists every hour while
+running, even with the browser closed. Refreshes are serialized across accounts;
+source failures do not stop other accounts. The first automatic run is one hour
+after server startup. Open apps check for updated state every minute and on focus.
