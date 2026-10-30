@@ -1,3 +1,4 @@
+import { resolveVideoDates } from "./youtube-dates.ts";
 import { cleanPastedUrl } from "../src/clean-url.ts";
 import { fetchPublicPage as page } from "./public-page.ts";
 import { initialData, publicPosts } from "./youtube.ts";
@@ -298,6 +299,7 @@ export function playlistPage(data: any, creatorId: string) {
 }
 export async function importPlaylist(
   input: string,
+  existing: Post[] = [],
 ): Promise<{ playlist: Playlist; posts: Post[] }> {
   const id = playlistId(input),
     url = `https://www.youtube.com/playlist?list=${id}`;
@@ -349,6 +351,17 @@ export async function importPlaylist(
     throw new Error(
       "No playable videos found. Use a public or unlisted YouTube playlist.",
     );
+  const missingDates = await resolveVideoDates(
+    [...collected.values()],
+    existing,
+  );
+  if (missingDates)
+    warning = [
+      warning,
+      `Exact publication dates unavailable for ${missingDates} videos; their chronological order may be approximate. Refresh to retry.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
   return {
     playlist: { id, title, url, postIds: [...collected.keys()], warning },
     posts: [...collected.values()],

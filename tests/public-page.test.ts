@@ -41,6 +41,10 @@ test("playlist import retries a failed connection and follows a validated YouTub
   globalThis.fetch = async (input, init) => {
     requests.push(String(input));
     assert.equal(init?.redirect, "manual");
+    if (String(input).includes("/watch?v="))
+      return new Response(
+        'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"M4TB50FtID4"},"microformat":{"playerMicroformatRenderer":{"publishDate":"2026-01-17T13:00:56Z"}}};',
+      );
     if (requests.length === 1) throw new TypeError("fetch failed");
     if (requests.length === 2)
       return new Response(null, {
@@ -65,7 +69,14 @@ test("playlist import retries a failed connection and follows a validated YouTub
     const r = await importPlaylist(clean + "&si=tracking");
     assert.equal(r.posts.length, 1);
     assert.equal(r.playlist.url, clean);
-    assert.deepEqual(requests, [clean, clean, clean + "&hl=en"]);
+    assert.deepEqual(requests, [
+      clean,
+      clean,
+      clean + "&hl=en",
+      "https://www.youtube.com/watch?v=M4TB50FtID4",
+    ]);
+    assert.equal(r.posts[0].published, "2026-01-17T13:00:56.000Z");
+    assert.equal(r.playlist.warning, undefined);
   } finally {
     globalThis.fetch = original;
   }

@@ -1,3 +1,4 @@
+import { resolveVideoDates } from "./youtube-dates.ts";
 import { hourlyRefresh } from "./refresh.ts";
 import { importLink, importPlaylist } from "./library.ts";
 import { initializeAccounts, installAuth, owner, asOwner } from "./auth.ts";
@@ -173,7 +174,7 @@ function removePlaylistMembership(p: Post, id: string) {
   else savePost(p);
 }
 async function refreshPlaylist(url: string, existingOnly = false) {
-  const result = await importPlaylist(url);
+  const result = await importPlaylist(url, posts());
   const oldRow = db
     .prepare("SELECT data FROM playlists WHERE user_id=? AND id=?")
     .get(owner(), result.playlist.id);
@@ -479,6 +480,26 @@ async function syncContents() {
                       c.id,
                       enabledTypes(account) as Kind[],
                     );
+          if (account.platform === "youtube") {
+            const existing = posts();
+            const kept = new Set(
+              existing
+                .filter(
+                  (p) =>
+                    p.saved ||
+                    p.notes?.trim() ||
+                    p.linked ||
+                    p.playlistIds?.length,
+                )
+                .map((p) => p.id),
+            );
+            await resolveVideoDates(
+              result.posts.filter(
+                (p) => kept.has(p.id) || !expiredPost(p, retention),
+              ),
+              existing,
+            );
+          }
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (!current || !source || !enabledTypes(source).length) continue;

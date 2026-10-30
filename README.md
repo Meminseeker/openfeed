@@ -152,3 +152,11 @@ The server refreshes each account's creator sources and playlists every hour whi
 running, even with the browser closed. Refreshes are serialized across accounts;
 source failures do not stop other accounts. The first automatic run is one hour
 after server startup. Open apps check for updated state every minute and on focus.
+
+YouTube playlist imports resolve precise publication timestamps from each video's
+public watch-page metadata instead of sorting rounded “months ago” estimates.
+Existing playlists are corrected on their next manual or hourly refresh. Exact
+stored dates are reused, and at most three date lookups run concurrently. Creator
+refreshes also resolve missing/approximate video dates for retained content. If
+YouTube withholds a video's precise date, the playlist shows a warning and retries
+on the next refresh rather than inventing a chronological position.
