@@ -25,6 +25,7 @@ export interface Account {
   platform: string;
   username: string;
   channelId?: string;
+  campaignId?: string;
   syncTypes?: SyncType[];
   xSinceId?: string;
   lastSync?: string;
@@ -40,6 +41,20 @@ export interface Creator {
   lastSync?: string;
   error?: string;
 }
+// Sanitized rich text; rendered as React elements, never as HTML.
+export interface RichSpan {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  href?: string;
+}
+export type RichBlock =
+  | { type: "paragraph" | "quote"; spans: RichSpan[] }
+  | { type: "heading"; level: number; spans: RichSpan[] }
+  | { type: "item"; ordered: boolean; spans: RichSpan[] }
+  | { type: "image"; src: string; width?: number; height?: number }
+  | { type: "rule" };
 export interface Post {
   id: string;
   creatorId: string;
@@ -48,7 +63,7 @@ export interface Post {
   image?: string;
   images?: string[];
   videoId?: string;
-  platform?: "youtube" | "x" | "instagram" | "tiktok";
+  platform?: "youtube" | "x" | "instagram" | "tiktok" | "patreon";
   sourceUsername?: string;
   videos?: { url: string; poster?: string; loop?: boolean }[];
   repost?: boolean;
@@ -66,6 +81,8 @@ export interface Post {
   textTruncated?: boolean;
   textExpanded?: boolean;
   textVersion?: number;
+  blocks?: RichBlock[];
+  locked?: boolean;
   read: boolean;
   saved: boolean;
 }

@@ -34,6 +34,15 @@ test("retention preserves saved, annotated, recent, undated and invalid-date pos
     false,
   );
 });
+test("unread Patreon posts are kept until read, then follow normal retention", () => {
+  const patreon: Post = { ...post, platform: "patreon" };
+  assert.equal(expiredPost(patreon, 7, now), false);
+  assert.equal(expiredPost({ ...patreon, read: true }, 7, now), true);
+  assert.equal(
+    expiredPost({ ...patreon, read: true, saved: true }, 7, now),
+    false,
+  );
+});
 test("retention configuration rejects unsafe values", () => {
   assert.equal(retentionDays("90"), 90);
   for (const value of ["", "0", "-1", "NaN", "Infinity"])

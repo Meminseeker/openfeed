@@ -15,6 +15,8 @@ export function expiredPost(post: Post, days: number, now = Date.now()) {
     !post.removed &&
     !post.saved &&
     !post.notes?.trim() &&
+    // Patreon posts stay until read so falling behind never loses any.
+    !(post.platform === "patreon" && !post.read) &&
     Number.isFinite(published) &&
     published < now - days * 86400000
   );
