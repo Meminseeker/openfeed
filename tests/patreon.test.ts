@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   fetchPatreonPost,
   patreonDoc,
+  patreonImport,
+  patreonPostsUrl,
   patreonPost,
   patreonUsername,
   resolvePatreonCampaign,
@@ -427,4 +429,55 @@ test("Patreon post detail renews content and signed images for the exact post", 
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("Patreon phone imports accept only the campaign's posts and explain bad uploads", () => {
+  const own = {
+    ...item("20", "2026-10-30T00:00:00Z"),
+    relationships: { campaign: { data: { id: "6460488" } } },
+  };
+  const other = {
+    ...item("21", "2026-10-30T00:00:00Z"),
+    relationships: { campaign: { data: { id: "1" } } },
+  };
+  const missing = item("22", "2026-10-30T00:00:00Z");
+  const result = patreonImport(
+    JSON.stringify({ data: [own, other, missing] }),
+    "6460488",
+    "yatirim101",
+    "c",
+  );
+  assert.deepEqual(
+    result.posts.map((p) => p.id),
+    ["patreon:20"],
+  );
+  assert.equal(result.warning, undefined);
+  const locked = {
+    ...own,
+    attributes: { ...own.attributes, current_user_can_view: false },
+  };
+  assert.match(
+    patreonImport(JSON.stringify({ data: [locked] }), "6460488", "y", "c")
+      .warning!,
+    /session_id in the phone shortcut/,
+  );
+  assert.throws(
+    () => patreonImport("<html>Just a moment...</html>", "1", "y", "c"),
+    /no Patreon data/,
+  );
+  assert.throws(
+    () =>
+      patreonImport(
+        JSON.stringify({ errors: [{ detail: "Forbidden" }] }),
+        "1",
+        "y",
+        "c",
+      ),
+    /error on the phone: Forbidden/,
+  );
+  const url = new URL(patreonPostsUrl("6460488"));
+  assert.equal(url.origin + url.pathname, "https://www.patreon.com/api/posts");
+  assert.equal(url.searchParams.get("filter[campaign_id]"), "6460488");
+  assert.equal(url.searchParams.get("include"), "campaign");
+  assert.equal(url.searchParams.get("page[count]"), "50");
 });

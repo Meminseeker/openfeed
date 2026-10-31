@@ -325,6 +325,60 @@ function nextPage(value: unknown) {
   }
 }
 
+// The URL a phone fetches with its own Patreon session (servers are often blocked).
+export function patreonPostsUrl(campaignId: string, count = 50) {
+  const params = new URLSearchParams({
+    "filter[campaign_id]": campaignId,
+    "filter[contains_exclusive_posts]": "true",
+    "filter[is_draft]": "false",
+    sort: "-published_at",
+    "page[count]": String(count),
+    include: "campaign",
+    "fields[campaign]": "vanity",
+    "fields[post]": postFields,
+    "json-api-version": "1.0",
+    "json-api-use-default-includes": "false",
+  });
+  return `${api}/posts?${params}`;
+}
+
+// Parses a posts page uploaded by a phone; every post must belong to the campaign.
+export function patreonImport(
+  body: string,
+  campaignId: string,
+  username: string,
+  creatorId: string,
+) {
+  let data: any;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw new Error(
+      "The phone sent no Patreon data. Patreon may have blocked the request or the session expired.",
+    );
+  }
+  if (!Array.isArray(data?.data))
+    throw new Error(
+      data?.errors?.[0]?.detail
+        ? `Patreon returned an error on the phone: ${String(data.errors[0].detail).slice(0, 100)}.`
+        : "The phone sent an unexpected Patreon response.",
+    );
+  const posts = data.data
+    .filter(
+      (item: any) =>
+        String(item?.relationships?.campaign?.data?.id) === campaignId,
+    )
+    .map((item: any) => patreonPost(item, username, creatorId))
+    .filter(Boolean) as Post[];
+  return {
+    posts,
+    warning:
+      posts.length && posts.every((p) => p.locked)
+        ? "Every Patreon post is locked. Update the session_id in the phone shortcut."
+        : undefined,
+  };
+}
+
 export async function syncPatreon(
   input: string,
   campaignId: string,

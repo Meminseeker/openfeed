@@ -9,6 +9,8 @@ import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername, expandXPost } from "./x.ts";
 import {
   fetchPatreonPost,
+  patreonImport,
+  patreonPostsUrl,
   patreonUsername,
   resolvePatreonCampaign,
   syncPatreon,
@@ -18,7 +20,7 @@ import { requestAllowed, validatePublicOrigin } from "./access.ts";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolveChannel, syncChannel } from "./youtube.ts";
 import type { Creator, Post, Kind } from "../src/types.ts";
 import { enabledTypes, sourceTypes } from "../src/types.ts";
@@ -117,6 +119,88 @@ app.get("/healthz", (_, res) => {
   db.prepare("SELECT 1").get();
   res.json({ ok: true });
 });
+db.exec(
+  "CREATE TABLE IF NOT EXISTS import_tokens (token TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, created INTEGER NOT NULL)",
+);
+const tokenDigest = (token: string) =>
+  createHash("sha256").update(token).digest("hex");
+// Phone shortcuts upload Patreon pages fetched with the phone's own session,
+// because Patreon blocks datacenter IPs. Registered before session auth and
+// the 100kb JSON parser; authenticated by a per-account bearer token.
+app.post(
+  "/api/patreon/import",
+  express.text({ type: () => true, limit: "5mb" }),
+  (req, res) => {
+    const token = req
+      .get("authorization")
+      ?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+    const row = token
+      ? db
+          .prepare("SELECT user_id FROM import_tokens WHERE token=?")
+          .get(tokenDigest(token))
+      : undefined;
+    res.set("Cache-Control", "no-store");
+    if (!row) {
+      res.status(401).json({ error: "Invalid phone sync token." });
+      return;
+    }
+    asOwner(String(row.user_id), () => {
+      const campaignId = String(req.query.campaign || "");
+      const creator = creators().find((c) =>
+        c.accounts.some(
+          (a) => a.platform === "patreon" && a.campaignId === campaignId,
+        ),
+      );
+      const source = creator?.accounts.find(
+        (a) => a.platform === "patreon" && a.campaignId === campaignId,
+      );
+      if (!creator || !source || !/^\d+$/.test(campaignId)) {
+        res.status(404).json({
+          error: "No followed Patreon creator matches this campaign.",
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      source.phoneSync = now;
+      let result;
+      try {
+        result = patreonImport(
+          typeof req.body === "string" ? req.body : "",
+          campaignId,
+          source.username,
+          creator.id,
+        );
+      } catch (e) {
+        source.error = e instanceof Error ? e.message : "Import failed";
+        creator.error = creatorError(creator);
+        saveCreator(creator);
+        res.status(400).json({ error: source.error });
+        return;
+      }
+      const since = Date.now() - retention * 86400000;
+      const old = new Map(posts().map((p) => [p.id, p]));
+      let added = 0,
+        updated = 0;
+      if (enabledTypes(source).includes("post"))
+        for (const p of result.posts) {
+          const prev = old.get(p.id);
+          // Like server sync, only the retention window is backfilled.
+          if (!prev && !(Date.parse(p.published) >= since)) continue;
+          const merged = mergeSynced(p, prev);
+          if (expiredPost(merged, retention)) continue;
+          savePost(merged);
+          if (prev) updated++;
+          else added++;
+        }
+      source.lastSync = now;
+      source.error = result.warning;
+      creator.lastSync = now;
+      creator.error = creatorError(creator);
+      saveCreator(creator);
+      res.json({ ok: true, added, updated });
+    });
+  },
+);
 app.use(express.json({ limit: "100kb" }));
 installAuth(app, db, !!publicOrigin);
 function state() {
@@ -453,6 +537,79 @@ app.delete("/api/creators/:id", (req, res) => {
   );
   res.json({ ok: true });
 });
+function creatorError(c: Creator) {
+  return (
+    c.accounts
+      .map((a) =>
+        a.error
+          ? `${platformLabels[a.platform] || a.platform}: ${a.error}`
+          : "",
+      )
+      .filter(Boolean)
+      .join(" · ") || undefined
+  );
+}
+// Merges a freshly fetched post into the stored one, keeping user state.
+function mergeSynced(p: Post, prev: Post | undefined): Post {
+  const keepDate =
+    !!prev?.published && (p.publishedApproximate || !p.published);
+  return {
+    ...p,
+    published: keepDate ? prev!.published : p.published,
+    publishedApproximate: keepDate
+      ? prev!.publishedApproximate
+      : p.publishedApproximate,
+    read: prev?.read || false,
+    saved: prev?.saved || false,
+    notes: prev?.notes || "",
+    removed: prev?.removed,
+    linked: prev?.linked,
+    linkedAt: prev?.linkedAt,
+    playlistIds: prev?.playlistIds,
+    ...(prev?.textExpanded && (prev.text?.length || 0) >= (p.text?.length || 0)
+      ? {
+          text: prev.text,
+          title: prev.title,
+          textExpanded: true,
+          textVersion: prev.textVersion,
+          textTruncated: false,
+        }
+      : {}),
+  };
+}
+function phoneSyncInfo(req: express.Request) {
+  const origin = publicOrigin || `http://${req.get("host")}`;
+  const enabled = !!db
+    .prepare("SELECT 1 FROM import_tokens WHERE user_id=?")
+    .get(owner());
+  return {
+    enabled,
+    creators: creators()
+      .filter((c) => !c.libraryOnly)
+      .flatMap((c) =>
+        c.accounts
+          .filter((a) => a.platform === "patreon" && a.campaignId)
+          .map((a) => ({
+            name: c.name,
+            username: a.username,
+            lastSync: a.phoneSync,
+            patreonUrl: patreonPostsUrl(a.campaignId!),
+            importUrl: `${origin}/api/patreon/import?campaign=${a.campaignId}`,
+          })),
+      ),
+  };
+}
+app.get("/api/patreon/phone-sync", (req, res) => {
+  res.json(phoneSyncInfo(req));
+});
+// Creates (or replaces) this account's phone sync token; shown only once.
+app.post("/api/patreon/phone-sync", (req, res) => {
+  const token = randomBytes(32).toString("hex");
+  db.prepare(
+    "INSERT OR REPLACE INTO import_tokens (token, user_id, created) VALUES (?,?,?)",
+  ).run(tokenDigest(token), owner(), Date.now());
+  res.json({ ...phoneSyncInfo(req), token });
+});
 // The Patreon session belongs to one member; never use it for other accounts.
 function patreonSessionAllowed() {
   const allowed = process.env.PATREON_OPENFEED_USER?.trim().toLowerCase();
@@ -470,6 +627,8 @@ async function syncContents() {
         ["youtube", "x", "instagram", "tiktok", "patreon"].includes(a.platform),
       )) {
         if (!enabledTypes(account).length) continue;
+        // Phone-synced Patreon accounts are uploaded by the shortcut instead.
+        if (account.platform === "patreon" && account.phoneSync) continue;
         const sameSource = (a: Creator["accounts"][number]) =>
           a.platform === account.platform &&
           (a.platform === "youtube"
@@ -538,33 +697,7 @@ async function syncContents() {
               )
             )
               continue;
-            const prev = old.get(p.id);
-            const keepDate =
-              !!prev?.published && (p.publishedApproximate || !p.published);
-            const updated: Post = {
-              ...p,
-              published: keepDate ? prev!.published : p.published,
-              publishedApproximate: keepDate
-                ? prev!.publishedApproximate
-                : p.publishedApproximate,
-              read: prev?.read || false,
-              saved: prev?.saved || false,
-              notes: prev?.notes || "",
-              removed: prev?.removed,
-              linked: prev?.linked,
-              linkedAt: prev?.linkedAt,
-              playlistIds: prev?.playlistIds,
-              ...(prev?.textExpanded &&
-              (prev.text?.length || 0) >= (p.text?.length || 0)
-                ? {
-                    text: prev.text,
-                    title: prev.title,
-                    textExpanded: true,
-                    textVersion: prev.textVersion,
-                    textTruncated: false,
-                  }
-                : {}),
-            };
+            const updated = mergeSynced(p, old.get(p.id));
             if (!expiredPost(updated, retention)) savePost(updated);
           }
           if ("newestId" in result && typeof result.newestId === "string")
@@ -575,29 +708,14 @@ async function syncContents() {
           if (!current.avatar && "avatar" in result)
             current.avatar = String(result.avatar || "");
           current.lastSync = source.lastSync;
-          current.error =
-            current.accounts
-              .map((a) =>
-                a.error
-                  ? `${platformLabels[a.platform] || a.platform}: ${a.error}`
-                  : "",
-              )
-              .filter(Boolean)
-              .join(" · ") || undefined;
+          current.error = creatorError(current);
           saveCreator(current);
         } catch (e) {
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (current && source) {
             source.error = e instanceof Error ? e.message : "Sync failed";
-            current.error = current.accounts
-              .map((a) =>
-                a.error
-                  ? `${platformLabels[a.platform] || a.platform}: ${a.error}`
-                  : "",
-              )
-              .filter(Boolean)
-              .join(" · ");
+            current.error = creatorError(current);
             saveCreator(current);
           }
         }
@@ -660,6 +778,15 @@ app.get("/api/posts/:id/detail", async (req, res) => {
     return;
   }
   if (post.platform === "patreon") {
+    // Phone-synced posts are refreshed by the shortcut; the server is blocked.
+    if (
+      creators()
+        .find((c) => c.id === post.creatorId)
+        ?.accounts.some((a) => a.platform === "patreon" && a.phoneSync)
+    ) {
+      res.json(post);
+      return;
+    }
     const fresh = await fetchPatreonPost(post, patreonSessionAllowed());
     const current = posts().find((p) => p.id === post.id);
     if (!current || current.removed) {

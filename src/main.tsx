@@ -45,6 +45,7 @@ import {
 import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
 import { enabledTypes, sourceTypes, syncLabels } from "./types";
 import { api } from "./api";
+import { PhoneSync } from "./PhoneSync";
 import { ContentViewer } from "./ContentViewer";
 import { LinkActions } from "./LinkActions";
 import "@fontsource/dm-sans/400.css";
@@ -1372,8 +1373,13 @@ function CreatorModal({
                         {account.error ||
                           (platform === "tiktok"
                             ? "Public videos sync on refresh. TikTok may restrict access."
-                            : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
+                            : account.phoneSync
+                              ? "Synced from your phone shortcut. Unread posts stay until you read them."
+                              : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
                       </small>
+                      {platform === "patreon" && creator && (
+                        <PhoneSync username={account.username} />
+                      )}
                     </>
                   )}
                 </div>

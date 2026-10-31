@@ -26,6 +26,7 @@ export interface Account {
   username: string;
   channelId?: string;
   campaignId?: string;
+  phoneSync?: string;
   syncTypes?: SyncType[];
   xSinceId?: string;
   lastSync?: string;

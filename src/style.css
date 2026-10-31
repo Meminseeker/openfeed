@@ -1273,6 +1273,63 @@ h1 {
   border: 1px solid #d8dfcc;
   border-radius: 4px;
 }
+.phone-sync-open,
+.phone-sync button:not([aria-label]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 11px;
+  border: 1px solid #d0dac2;
+  border-radius: 6px;
+  background: #fafcf6;
+  color: #35634b;
+  font-size: 12px;
+  cursor: pointer;
+}
+.phone-sync {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #dfe5d4;
+  border-radius: 8px;
+  background: #fafcf6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.phone-sync p {
+  margin: 0 0 10px;
+  color: #637157;
+}
+.copy-field {
+  display: block;
+  margin-bottom: 10px;
+}
+.copy-field > span:first-child {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.copy-field > span:last-child {
+  display: flex;
+  gap: 6px;
+}
+.copy-field input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 7px;
+  border: 1px solid #d8dfcc;
+  border-radius: 4px;
+}
+.copy-field button {
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid #d8dfcc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+}
 /* Content viewer */
 .viewer-overlay {
   position: fixed;

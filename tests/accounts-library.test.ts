@@ -168,6 +168,101 @@ test("accounts isolate all content paths, library imports survive retention, ses
       (await call("posts/patreon:900/detail", a.cookie)).text,
       "Member text",
     );
+    // Phone shortcut import: bob uploads a page his phone fetched from Patreon.
+    const phone = await call("patreon/phone-sync", b.cookie, "POST");
+    assert.match(phone.token, /^[a-f0-9]{64}$/);
+    assert.equal(phone.creators[0].importUrl.startsWith(base), true);
+    assert.match(phone.creators[0].patreonUrl, /include=campaign/);
+    const upload = (body: string, token = phone.token, campaign = "6460488") =>
+      fetch(`${base}/api/patreon/import?campaign=${campaign}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+      });
+    const phonePost = (id: string, campaign: string, published: string) => ({
+      id,
+      type: "post",
+      relationships: { campaign: { data: { id: campaign, type: "campaign" } } },
+      attributes: {
+        title: `Phone ${id}`,
+        content_json_string: JSON.stringify({
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Fetched on the phone" }],
+            },
+          ],
+        }),
+        published_at: published,
+        url: `https://www.patreon.com/posts/phone-${id}`,
+        current_user_can_view: true,
+        was_posted_by_campaign_owner: true,
+      },
+    });
+    const page = JSON.stringify({
+      data: [
+        phonePost("901", "6460488", new Date().toISOString()),
+        phonePost("902", "999", new Date().toISOString()),
+        phonePost("903", "6460488", "2020-01-01T00:00:00Z"),
+      ],
+    });
+    assert.equal((await upload(page, "0".repeat(64))).status, 401);
+    assert.equal((await upload(page, phone.token, "123")).status, 404);
+    const imported = await upload(page);
+    assert.equal(imported.status, 200);
+    assert.deepEqual(await imported.json(), { ok: true, added: 1, updated: 0 });
+    let phoneState = await call("state", b.cookie);
+    const phoneItem = phoneState.posts.find((p: any) => p.id === "patreon:901");
+    assert.equal(phoneItem.text, "Fetched on the phone");
+    assert.equal(phoneItem.locked, undefined);
+    assert.ok(
+      !phoneState.posts.some((p: any) =>
+        ["patreon:902", "patreon:903"].includes(p.id),
+      ),
+      "other campaigns and posts outside the retention window are skipped",
+    );
+    assert.equal(
+      (await call("posts/patreon:901/detail", b.cookie)).text,
+      "Fetched on the phone",
+    );
+    await call("posts/patreon:901", b.cookie, "PATCH", { read: true });
+    assert.deepEqual(await (await upload(page)).json(), {
+      ok: true,
+      added: 0,
+      updated: 1,
+    });
+    assert.equal(
+      (await call("state", b.cookie)).posts.find(
+        (p: any) => p.id === "patreon:901",
+      ).read,
+      true,
+    );
+    const blocked = await upload("<html>Just a moment...</html>");
+    assert.equal(blocked.status, 400);
+    phoneState = await call("state", b.cookie);
+    assert.match(
+      phoneState.creators.find((c: any) => c.accounts[0].platform === "patreon")
+        .error,
+      /Patreon: The phone sent no Patreon data/,
+    );
+    // A phone-synced account is no longer fetched by the (blocked) server.
+    await call("sync", b.cookie, "POST");
+    assert.match(
+      (await call("state", b.cookie)).creators.find(
+        (c: any) => c.accounts[0].platform === "patreon",
+      ).error,
+      /phone sent no Patreon data/,
+    );
+    const replaced = await call("patreon/phone-sync", b.cookie, "POST");
+    assert.equal((await upload(page)).status, 401, "old token is revoked");
+    assert.equal((await upload(page, replaced.token)).status, 200);
+    assert.ok(
+      !(await call("state", a.cookie)).posts.some(
+        (p: any) => p.id === "patreon:901",
+      ),
+      "a token imports only into its own account, even for a shared campaign",
+    );
     await call(`creators/${c.id}`, b.cookie, "DELETE");
     await call("read", b.cookie, "POST", { ids: ["x:123"] });
     assert.equal(
