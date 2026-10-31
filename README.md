@@ -28,7 +28,7 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 ## What works
 
 - Follow a public YouTube channel or X account by @handle or profile URL (YouTube channel IDs also work).
-- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok supports public video import; Patreon remains metadata only.
+- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok supports public video import; Patreon syncs member posts with a configured session.
 - Mix videos, Shorts, and creator-authored community posts in one feed, including multi-image albums, alongside X text, photo, video and GIF posts.
 - Set content types to sync independently on each creator/source. Empty selection pauses that source. Existing posts and notes remain available. Other-platform preferences are stored until those integrations are implemented.
 - Open posts in a modal with video playback, image carousel, previous/next navigation, and separate copy/open-source actions.
@@ -116,6 +116,19 @@ On phones the viewer fills the screen, with larger controls and notes collapsed 
 Add TikTok directly or edit an existing creator's TikTok account using a username or HTTPS profile URL. Existing linked TikTok accounts participate in refresh automatically unless syncing is paused. The official creator embed supplies up to 10 recent videos (with profile JSON as a fallback); the viewer uses TikTok's [official embed player](https://developers.tiktok.com/docs/en/embed-player).
 
 Embed video dates are estimated from their IDs because the embed omits publication timestamps. TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.
+
+### Patreon
+
+Add a Patreon creator directly, or add the creator's Patreon name or profile URL (`patreon.com/name` or `patreon.com/cw/name`) to an existing creator, then refresh. OpenFeed resolves the creator's campaign and imports posts from the last retention window (7 days by default) on each manual or hourly refresh. **Unread Patreon posts are kept until you read them**, so falling behind never loses posts; once read, they follow the normal retention rules (saved and noted posts are kept).
+
+Patreon has no official API for reading a creator's posts. OpenFeed reads the same JSON the Patreon website uses. Member-only posts require your browser session:
+
+- `PATREON_SESSION_ID`: the `session_id` cookie value from a browser signed in to Patreon (Developer Tools → Application/Storage → Cookies → `www.patreon.com`).
+- `PATREON_OPENFEED_USER`: your OpenFeed username. The session is used **only** for this account; other accounts on the same server see public previews, where member posts appear locked with an Open on Patreon link.
+
+Restart the server after setting them. The cookie stays server-side and is never stored in the database or sent to the browser. It expires when Patreon ends the session (for example after logging out); the creator then shows "Patreon session expired…", and you replace the value and restart. Treat it like a password.
+
+Post text keeps headings, bold/underline/italic, links, lists, quotes and inline images (rendered without executing Patreon HTML). YouTube video posts play in the viewer. Patreon-hosted video/audio, polls, attachments and comments require **Open source**. Patreon image links are signed and expire after about two weeks; opening a post renews them, though card thumbnails of older unread posts may break until then. Patreon is behind Cloudflare and may block requests from datacenter IPs; a block appears as a source error and keeps existing posts.
 
 ### Install on your phone
 

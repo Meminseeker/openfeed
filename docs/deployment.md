@@ -18,11 +18,11 @@ Fresh, empty installations do not require a setup token. Login sessions last 30 
 
 These are starting estimates, not measured capacity guarantees:
 
-| Use                               | CPU    | RAM   | SSD    | Notes                                                                                |
-| --------------------------------- | ------ | ----- | ------ | ------------------------------------------------------------------------------------ |
+| Use                               | CPU    | RAM   | SSD    | Notes                                                                               |
+| --------------------------------- | ------ | ----- | ------ | ----------------------------------------------------------------------------------- |
 | Minimum for light personal use    | 1 vCPU | 1 GiB | 25 GiB | Add 1–2 GiB swap; image builds may run out of memory. Build elsewhere if necessary. |
-| Recommended starting Droplet      | 1 vCPU | 2 GiB | 50 GiB | Better headroom for builds and a few friends with separate workspaces.                 |
-| Grow when measurements justify it | 2 vCPU | 4 GiB | 80 GiB | Large feeds, heavier refreshes, or simultaneous video playback.                      |
+| Recommended starting Droplet      | 1 vCPU | 2 GiB | 50 GiB | Better headroom for builds and a few friends with separate workspaces.              |
+| Grow when measurements justify it | 2 vCPU | 4 GiB | 80 GiB | Large feeds, heavier refreshes, or simultaneous video playback.                     |
 
 Use a Basic Droplet with Ubuntu 24.04 LTS, in a region near you. Standard shared CPU is sufficient to start. DigitalOcean currently lists the 2 GiB / 1 vCPU / 50 GiB Basic plan at **US$12/month**; confirm at checkout. Backups, taxes, optional platform API usage, and excess transfer are additional. See [Droplet pricing](https://www.digitalocean.com/pricing/droplets) (checked October 6, 2026).
 
@@ -74,7 +74,7 @@ OPENFEED_SETUP_TOKEN=YOUR_RANDOM_SECRET
 
 `.env` is ignored by Git and excluded from the Docker build context. Keep it private; `docker compose config` without `--quiet` may print resolved credentials. Docker administrators can inspect container environment variables.
 
-Optional X/Instagram variables in `.env` match the integration configuration in the [README](../README.md). They stay server-side. Leave them blank for public-page mode. Set all three Instagram variables together when using Business Discovery.
+Optional X/Instagram/Patreon variables in `.env` match the integration configuration in the [README](../README.md). They stay server-side. Leave them blank for public-page mode. Set all three Instagram variables together when using Business Discovery. For Patreon member posts, set `PATREON_SESSION_ID` and `PATREON_OPENFEED_USER` (your OpenFeed username) together; Patreon may block datacenter IPs even with a valid session.
 
 ## 3. Build and start
 

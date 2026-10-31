@@ -11,7 +11,7 @@ This section exists so a new session does not have to re-explore the repo. Line 
 
 ## What it is
 
-OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, Instagram and TikTok by scraping public pages, with optional official APIs for X and Instagram. It also supports saved links and YouTube playlists, notes with timestamps, and read/saved state. Each account has its own isolated workspace.
+OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, Instagram and TikTok by scraping public pages, with optional official APIs for X and Instagram, and on Patreon through the web app's JSON API using the owner's session cookie. It also supports saved links and YouTube playlists, notes with timestamps, and read/saved state. Each account has its own isolated workspace.
 
 - **Stack:** React 19 + Vite 7 SPA (`src/`), an Express 5 server (`server/`), and SQLite through the built-in `node:sqlite` `DatabaseSync` (synchronous; no ORM). The only runtime dependencies are express, fast-xml-parser, lucide-react, react/react-dom and @fontsource fonts.
 - **Single port:** in dev, `server/index.ts` mounts Vite in middleware mode. In production it serves `dist/` with an SPA fallback (`app.get("/{*path}")`, Express 5 syntax).
@@ -58,12 +58,14 @@ server/
   x.ts             syncX (syndication or official API v2), parseXTimeline, expandXPost, fetchXStatus (FxEmbed)
   instagram.ts     syncInstagram (public embed or Meta Business Discovery), instagramPosts
   tiktok.ts        syncTikTok (creator embed, then profile JSON fallback)
+  patreon.ts       syncPatreon, resolvePatreonCampaign, patreonDoc (TipTap → RichBlock), fetchPatreonPost
 src/
   main.tsx         App: all state, sidebar, feed/creators/saved/noted pages, PostCard, CreatorModal (~1400 lines)
   ContentViewer.tsx Modal viewer: YouTube iframe API, native <video>, TikTok iframe, image carousel, shortcuts, swipe, fullscreen
   Notes.tsx        Autosaved notes with localStorage drafts and timestamp insertion and jumps
   LibraryView.tsx  Playlists and Links pages
   LinkActions.tsx  Copy-link / Open-source buttons (PostCard + viewer)
+  RichText.tsx     Renders sanitized RichBlock[] (Patreon bodies) as React elements
   AuthGate.tsx     Login/signup/claim gate; renders App once authenticated
   api.ts           fetch wrapper (X-OpenFeed-User header, 401 → logout event), writeNotes serializer
   types.ts         Shared models (SERVER IMPORTS THIS)
@@ -86,7 +88,7 @@ tests/             node:test files + fixtures/
   - x: post, repost
   - instagram: post, video, short (Reels are stored as `short`)
   - tiktok: video
-  - patreon: post (metadata only; there is no adapter)
+  - patreon: post
 - `enabledTypes(account)` returns `account.syncTypes`. If that is unset, **X defaults to `["post"]`** and every other platform gets all of its types. An empty array pauses the source.
 - `Account` fields: `{platform, username, channelId?, syncTypes?, xSinceId?, lastSync?, error?}`.
 - `Creator` fields: `{id, name, tags[], accounts[], avatar, lastSync?, error?, libraryOnly?}`.
@@ -201,7 +203,8 @@ All `/api/*` routes except `/api/auth/*` require a session. What a route returns
   - X: `syncX(username, creatorId, xSinceId, includeReposts)`.
   - Instagram: `syncInstagram(username, creatorId, types)`.
   - TikTok: `syncTikTok(username, creatorId)`.
-  - Accounts with no enabled types are skipped. Patreon is never synced.
+  - Patreon: `syncPatreon(username, campaignId, creatorId, {useSession, since})`. A missing `campaignId` is resolved and saved on the account.
+  - Accounts with no enabled types are skipped.
 - Adapters return `{posts, warning?, avatar?, newestId?}`.
   - `warning` is written to `account.error` and shown in the UI, even when the sync succeeded. X public mode always sets a coverage warning.
   - The avatar is filled in only if the creator has none.
@@ -226,6 +229,7 @@ All `/api/*` routes except `/api/auth/*` require a session. What a route returns
 - `OPENFEED_RETENTION_DAYS` defaults to 7 and must be at least 1. It is read once at boot.
 - A post expires only if it is not `libraryOnly`, `linked`, in a playlist, `removed`, `saved` or annotated with notes, **and** has a parsable date older than N days.
 - Undated posts never expire.
+- **Unread Patreon posts never expire**; once read they follow the rule above.
 
 **Library** is split across two files.
 
@@ -272,6 +276,14 @@ In `index.ts`:
   - Without a token, data comes from the syndication timeline (`__NEXT_DATA__`). With a token, the official v2 API is used; the response is re-serialized into the same fake `__NEXT_DATA__` shape so `parseXTimeline` handles both paths.
   - `expandXPost` repairs truncated text. It uses the canonical X page `<h1>` plus FxEmbed (`api.fxtwitter.com`) and keeps a 5-minute in-memory cache.
 - **Instagram:** the public profile embed gives about 6 posts. Video items among the first 6 media items are enriched one at a time through `/p/<code>/embed/captioned/`.
+- **Patreon** (`patreon.ts`):
+  - There is no official API. It uses `www.patreon.com/api/campaigns?filter[vanity]=` (campaign id, name, avatar) and `/api/posts?filter[campaign_id]=…&sort=-published_at` (JSON:API, `links.next` paging).
+  - Pages of 20 are fetched until a post is older than the retention window, with a cap of 10 pages.
+  - The body is `content_json_string` (TipTap JSON). `patreonDoc` turns it into `Post.blocks` (`RichBlock[]` in `types.ts`) plus plain `text`. It allowlists image hosts (`*.patreonusercontent.com`) and link protocols (http/https).
+  - `Cookie: session_id=$PATREON_SESSION_ID` is sent **only** when `patreonSessionAllowed()` in `index.ts` is true, i.e. when the request owner's username equals `PATREON_OPENFEED_USER`. Other accounts get public data: `current_user_can_view:false` makes the post `locked: true`, with no blocks.
+  - An invalid cookie still returns HTTP 200 with locked posts. That is the only sign of an expired session, and it produces a warning.
+  - Ids are `patreon:<postId>` and `kind` is always `"post"`. For a YouTube `embed.url`, `videoId` is set and the viewer plays it with the YouTube player.
+  - Image URLs are signed and expire in about 2 weeks. When a Patreon post is opened, the viewer calls `GET /api/posts/:id/detail`, which re-fetches the post (5-min cache) and renews `blocks` and `image`.
 - **TikTok:**
   - The creator embed gives up to 10 videos, with dates estimated as `BigInt(id) >> 32n` (marked approximate).
   - Profile JSON is the fallback.
@@ -285,9 +297,9 @@ There is no registry. The platform list is hardcoded in several places:
 1. `src/types.ts`: add the platform to `sourceTypes` and the `Post.platform` union. If the platform introduces a new kind, also update the `Kind`/`SyncType` unions and `syncLabels`, which is keyed by type.
 2. `server/<p>.ts`: export `<p>Username()` and `sync<P>()`. Posts need ids of the form `<p>:<id>`, plus `platform`, `sourceUsername`, `read:false` and `saved:false`.
 3. `server/index.ts`: update
-   - the platform allowlists and username normalizers in `POST /api/creators` and `PATCH /api/creators/:id`, including PATCH's `other` list and its `previous` lookup,
-   - the platform filter and the dispatch ternary in `syncContents`,
-   - the error-label ternaries.
+   - the `usernames` normalizer map and `platformLabels` near the top,
+   - the platform allowlists in `POST /api/creators` and `PATCH /api/creators/:id` (including PATCH's `other` list),
+   - the platform filter and the dispatch ternary in `syncContents`.
 
    **Missing one of these fails silently:** POST turns an unknown platform into `"youtube"`, and the dispatch's final `else` calls `syncChannel`.
 
@@ -367,6 +379,7 @@ There is no registry. The platform list is hardcoded in several places:
 | `OPENFEED_SETUP_TOKEN`                                                   |                    | Required to claim a pre-accounts (legacy) workspace                                                                                                                                   |
 | `X_BEARER_TOKEN`                                                         |                    | Switches every X source to the official API                                                                                                                                           |
 | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_GRAPH_VERSION` |                    | Meta Business Discovery; all three are required together                                                                                                                              |
+| `PATREON_SESSION_ID`, `PATREON_OPENFEED_USER`                            |                    | Patreon `session_id` cookie, used only for the OpenFeed user named by `PATREON_OPENFEED_USER`. Others get locked previews.                                                            |
 
 ## Known rough edges
 
