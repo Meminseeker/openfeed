@@ -74,7 +74,7 @@ OPENFEED_SETUP_TOKEN=YOUR_RANDOM_SECRET
 
 `.env` is ignored by Git and excluded from the Docker build context. Keep it private; `docker compose config` without `--quiet` may print resolved credentials. Docker administrators can inspect container environment variables.
 
-Optional X/Instagram/Patreon variables in `.env` match the integration configuration in the [README](../README.md). They stay server-side. Leave them blank for public-page mode. Set all three Instagram variables together when using Business Discovery. For Patreon member posts, set `PATREON_SESSION_ID` and `PATREON_OPENFEED_USER` (your OpenFeed username) together; Patreon may block datacenter IPs even with a valid session.
+Optional X/Instagram/Patreon variables in `.env` match the integration configuration in the [README](../README.md). They stay server-side. Leave them blank for public-page mode. Set all three Instagram variables together when using Business Discovery. For Patreon member posts, set `PATREON_SESSION_ID` and `PATREON_OPENFEED_USER` (your OpenFeed username) together. Patreon blocks DigitalOcean IPs (HTTP 403 regardless of session), so on a Droplet use the README's **Phone sync (iOS Shortcut)** instead and leave both blank.
 
 ## 3. Build and start
 

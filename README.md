@@ -130,6 +130,19 @@ Restart the server after setting them. The cookie stays server-side and is never
 
 Post text keeps headings, bold/underline/italic, links, lists, quotes and inline images (rendered without executing Patreon HTML). YouTube video posts play in the viewer. Patreon-hosted video/audio, polls, attachments and comments require **Open source**. Patreon image links are signed and expire after about two weeks; opening a post renews them, though card thumbnails of older unread posts may break until then. Patreon is behind Cloudflare and may block requests from datacenter IPs; a block appears as a source error and keeps existing posts.
 
+#### Phone sync (iOS Shortcut)
+
+Patreon blocks most datacenter IPs, including typical cloud servers, even with a valid session. In that case let your phone fetch Patreon and upload the result: the phone uses its own network and Patreon session, and the server never needs `PATREON_SESSION_ID`.
+
+1. In OpenFeed, open the creator → Other accounts → Patreon → **Phone sync setup** → **Create phone token**. Copy the three values (the token is shown once; creating a new one revokes the old).
+2. In the Shortcuts app create a shortcut named `OpenFeed Patreon` with two **Get Contents of URL** actions:
+   - **Fetch:** URL = _Patreon URL_; Method `GET`; Header `Cookie` = `session_id=<your Patreon session_id>`.
+   - **Upload:** URL = _OpenFeed upload URL_; Method `POST`; Header `Authorization` = the _Authorization header value_; Request Body `File`, set to the first action's **Contents of URL**.
+   - Run it once with a **Show Result** action at the end: `{"ok":true,"added":…,"updated":…}` means it worked. Remove that action afterwards.
+3. Automation tab → **New Automation → Time of Day** (Repeat Daily, **Run Immediately**, notifications off) → `OpenFeed Patreon`. Add one automation per time you want, for example every 2–3 hours; iOS has no hourly trigger.
+
+Each run downloads about 0.7 MB (the latest 50 posts, roughly 12 days), imports new posts from the retention window and renews text and signed images of existing ones. After the first upload the server stops fetching that Patreon account itself. Upload problems (a blocked phone request, an expired session) appear as the creator's source error. The token can only upload Patreon pages for creators you follow in your own account; posts must belong to that creator's campaign and are re-parsed and sanitized by the server.
+
 ### Install on your phone
 
 Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On iPhone/iPad use Safari → Share → Add to Home Screen. The app opens in its own window with an OpenFeed icon. Installation uses the same individual login as the website. The manifest and app icons are public so phone installers can retrieve them. If an older installation still shows “O”, remove that home-screen shortcut and install it again after deployment. Network access is required for the feed, syncing, media and saving notes; the offline page explains how to reconnect. The service worker caches only that generic offline page, never feed data or notes. Local note drafts retain their existing behavior.
