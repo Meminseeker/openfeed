@@ -29,6 +29,11 @@ test("accounts isolate all content paths, library imports survive retention, ses
             OPENFEED_DB: path,
             OPENFEED_PUBLIC_ORIGIN: "",
             OPENFEED_RETENTION_DAYS: "7",
+            X_BEARER_TOKEN: "",
+            INSTAGRAM_ACCESS_TOKEN: "",
+            INSTAGRAM_USER_ID: "",
+            PATREON_SESSION_ID: "fixture-session",
+            PATREON_OPENFEED_USER: "Alice",
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -131,13 +136,50 @@ test("accounts isolate all content paths, library imports survive retention, ses
         404,
         path,
       );
+    for (const user of [a, b])
+      await call("creators", user.cookie, "POST", {
+        platform: "patreon",
+        channel: "https://www.patreon.com/cw/TestCreator",
+      });
+    await call("sync", a.cookie, "POST");
+    await call("sync", b.cookie, "POST");
+    const memberPost = (await call("state", a.cookie)).posts.find(
+      (p: any) => p.id === "patreon:900",
+    );
+    assert.equal(memberPost.locked, undefined);
+    assert.equal(memberPost.text, "Member text");
+    assert.deepEqual(memberPost.blocks, [
+      { type: "paragraph", spans: [{ text: "Member text" }] },
+    ]);
+    const bobState = await call("state", b.cookie);
+    const preview = bobState.posts.find((p: any) => p.id === "patreon:900");
+    assert.equal(preview.locked, true, "the session is used only for Alice");
+    assert.equal(preview.text, "");
+    assert.match(
+      bobState.creators.find((c: any) => c.accounts[0].platform === "patreon")
+        .error,
+      /public Patreon previews/,
+    );
+    assert.equal(
+      (await call("posts/patreon:900/detail", b.cookie)).locked,
+      true,
+    );
+    assert.equal(
+      (await call("posts/patreon:900/detail", a.cookie)).text,
+      "Member text",
+    );
     await call(`creators/${c.id}`, b.cookie, "DELETE");
     await call("read", b.cookie, "POST", { ids: ["x:123"] });
     assert.equal(
-      (await call("state", a.cookie)).posts[0].notes,
+      (await call("state", a.cookie)).posts.find((p: any) => p.id === "x:123")
+        .notes,
       "Alice private note",
     );
-    assert.equal((await call("state", a.cookie)).posts[0].read, false);
+    assert.equal(
+      (await call("state", a.cookie)).posts.find((p: any) => p.id === "x:123")
+        .read,
+      false,
+    );
     await call("creators", b.cookie, "POST", {
       platform: "x",
       channel: "test",

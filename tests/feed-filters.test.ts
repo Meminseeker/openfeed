@@ -15,6 +15,10 @@ test("content filters distinguish the same content kind on different platforms a
     contentFilterKey({ kind: "post", platform: "instagram" } as Post),
     "instagram:post",
   );
+  assert.equal(
+    contentFilterKey({ kind: "post", platform: "patreon" } as Post),
+    "patreon:post",
+  );
   assert.equal(contentFilterKey({ kind: "video" } as Post), "youtube:video");
   assert.equal(
     contentFilterKey({ kind: "short", platform: "instagram" } as Post),

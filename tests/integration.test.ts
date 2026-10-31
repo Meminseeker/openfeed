@@ -74,6 +74,8 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
             X_BEARER_TOKEN: "",
             INSTAGRAM_ACCESS_TOKEN: "",
             INSTAGRAM_USER_ID: "",
+            PATREON_SESSION_ID: "",
+            PATREON_OPENFEED_USER: "",
             NODE_ENV: "production",
             PORT: "0",
             OPENFEED_DB: path,

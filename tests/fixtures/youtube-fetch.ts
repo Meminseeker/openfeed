@@ -78,6 +78,55 @@ globalThis.fetch = async (input, init) => {
     return new Response(
       `<script type="application/json">${JSON.stringify({ data: { user: { username: new URL(url).pathname.split("/")[1], is_private: false, edge_owner_to_timeline_media: { edges: [{ node: { shortcode: "testAlbum", edge_media_to_caption: { edges: [{ node: { text: "Instagram test album" } }] }, edge_sidecar_to_children: { edges: [{ node: { display_url: "https://scontent.cdninstagram.com/one.jpg" } }, { node: { display_url: "https://scontent.cdninstagram.com/two.jpg" } }] } } }] } } } })}</script>`,
     );
+  if (url.startsWith("https://www.patreon.com/api/campaigns?"))
+    return Response.json(
+      {
+        data: [
+          {
+            id: "6460488",
+            type: "campaign",
+            attributes: {
+              vanity: new URL(url).searchParams.get("filter[vanity]"),
+              name: "Patreon creator",
+            },
+          },
+        ],
+      },
+      { headers: { "content-type": "application/vnd.api+json" } },
+    );
+  if (url.startsWith("https://www.patreon.com/api/posts")) {
+    // Member content is visible only when the fixture session cookie is sent.
+    const member =
+      (init?.headers as Record<string, string> | undefined)?.Cookie ===
+      "session_id=fixture-session";
+    const post = {
+      id: "900",
+      type: "post",
+      attributes: {
+        title: "Member update",
+        content_json_string: member
+          ? JSON.stringify({
+              type: "doc",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "Member text" }],
+                },
+              ],
+            })
+          : null,
+        teaser_text_json_string: null,
+        published_at: new Date().toISOString(),
+        url: "https://www.patreon.com/posts/member-update-900",
+        current_user_can_view: member,
+        was_posted_by_campaign_owner: true,
+      },
+    };
+    return Response.json(
+      url.includes("/api/posts/900") ? { data: post } : { data: [post] },
+      { headers: { "content-type": "application/vnd.api+json" } },
+    );
+  }
   if (/^https:\/\/x\.com\/test\/status\/123$/.test(url))
     return new Response(
       `<link rel="canonical" href="${url}"><h1>Test on X: &quot;${"Complete public post. ".repeat(30)}&quot;</h1>`,

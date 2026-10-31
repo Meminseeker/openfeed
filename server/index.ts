@@ -7,6 +7,12 @@ import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername, expandXPost } from "./x.ts";
+import {
+  fetchPatreonPost,
+  patreonUsername,
+  resolvePatreonCampaign,
+  syncPatreon,
+} from "./patreon.ts";
 import express from "express";
 import { requestAllowed, validatePublicOrigin } from "./access.ts";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +29,30 @@ function validSyncTypes(platform: string, value: unknown) {
   )
     throw new Error("Invalid content types for this source.");
   return [...new Set(value)];
+}
+const usernames: Record<string, (input: string) => string> = {
+  x: xUsername,
+  tiktok: tiktokUsername,
+  instagram: instagramUsername,
+  patreon: patreonUsername,
+};
+const platformLabels: Record<string, string> = {
+  youtube: "YouTube",
+  x: "X",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  patreon: "Patreon",
+};
+// Compares stored usernames leniently: older Patreon entries were saved unvalidated.
+function sameUsername(platform: string, a: string, b: string) {
+  const normalize = (value: string) => {
+    try {
+      return (usernames[platform]?.(value) ?? value.trim()).toLowerCase();
+    } catch {
+      return value.trim().toLowerCase();
+    }
+  };
+  return normalize(a) === normalize(b);
 }
 const databasePath = process.env.OPENFEED_DB || "data/openfeed.db";
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -232,32 +262,26 @@ app.delete("/api/playlists/:id", (req, res) => {
 });
 app.post("/api/creators", async (req, res, next) => {
   try {
-    const platform = ["x", "instagram", "tiktok"].includes(req.body.platform)
+    const platform = ["x", "instagram", "tiktok", "patreon"].includes(
+      req.body.platform,
+    )
       ? req.body.platform
       : "youtube";
     const input = String(req.body.channel || "");
     const channel =
       platform === "youtube" ? await resolveChannel(input) : undefined;
-    const username =
-      platform === "x"
-        ? xUsername(input)
-        : platform === "tiktok"
-          ? tiktokUsername(input)
-          : platform === "instagram"
-            ? instagramUsername(input)
-            : input;
+    const username = usernames[platform]?.(input) ?? input;
+    const campaign =
+      platform === "patreon"
+        ? await resolvePatreonCampaign(username)
+        : undefined;
     if (
       creators().some((c) =>
         c.accounts.some((a) =>
           platform === "youtube"
             ? a.channelId === channel!.id
             : a.platform === platform &&
-              (platform === "x"
-                ? xUsername(a.username)
-                : platform === "tiktok"
-                  ? tiktokUsername(a.username)
-                  : instagramUsername(a.username)
-              ).toLowerCase() === username.toLowerCase(),
+              sameUsername(platform, a.username, username),
         ),
       )
     ) {
@@ -266,10 +290,17 @@ app.post("/api/creators", async (req, res, next) => {
     }
     const c: Creator = {
       id: randomUUID(),
-      name: channel?.name || username,
-      avatar: channel?.avatar || "",
+      name: channel?.name || campaign?.name || username,
+      avatar: channel?.avatar || campaign?.avatar || "",
       tags: [],
-      accounts: [{ platform, username, channelId: channel?.id }],
+      accounts: [
+        {
+          platform,
+          username,
+          channelId: channel?.id,
+          campaignId: campaign?.id,
+        },
+      ],
     };
     saveCreator(c);
     res.json(c);
@@ -335,17 +366,11 @@ app.patch("/api/creators/:id", async (req, res) => {
     }
     for (const a of req.body.accounts.filter(
       (a: any) =>
-        ["x", "instagram", "tiktok"].includes(a.platform) &&
+        ["x", "instagram", "tiktok", "patreon"].includes(a.platform) &&
         typeof a.username === "string" &&
         a.username.trim(),
     )) {
-      const normalize =
-        a.platform === "x"
-          ? xUsername
-          : a.platform === "tiktok"
-            ? tiktokUsername
-            : instagramUsername;
-      const username = normalize(a.username);
+      const username = usernames[a.platform](a.username);
       if (
         creators().some(
           (other) =>
@@ -353,8 +378,7 @@ app.patch("/api/creators/:id", async (req, res) => {
             other.accounts.some(
               (old) =>
                 old.platform === a.platform &&
-                normalize(old.username).toLowerCase() ===
-                  username.toLowerCase(),
+                sameUsername(a.platform, old.username, username),
             ),
         )
       )
@@ -373,36 +397,22 @@ app.patch("/api/creators/:id", async (req, res) => {
         ...c.accounts.find(
           (old) =>
             old.platform === a.platform &&
-            (["x", "instagram", "tiktok"].includes(a.platform)
-              ? (a.platform === "x"
-                  ? xUsername(old.username)
-                  : a.platform === "tiktok"
-                    ? tiktokUsername(old.username)
-                    : instagramUsername(old.username)
-                ).toLowerCase() ===
-                (a.platform === "x"
-                  ? xUsername(a.username)
-                  : a.platform === "tiktok"
-                    ? tiktokUsername(a.username)
-                    : instagramUsername(a.username)
-                ).toLowerCase()
-              : old.username === a.username.trim()),
+            sameUsername(a.platform, old.username, a.username),
         ),
         platform: a.platform,
         username:
-          a.platform === "x"
-            ? xUsername(a.username)
-            : a.platform === "tiktok"
-              ? tiktokUsername(a.username)
-              : a.platform === "instagram"
-                ? instagramUsername(a.username)
-                : a.username.trim().slice(0, 100),
+          usernames[a.platform]?.(a.username) ??
+          a.username.trim().slice(0, 100),
         syncTypes:
           a.syncTypes !== undefined
             ? validSyncTypes(a.platform, a.syncTypes)
             : undefined,
       }));
     for (const account of other) {
+      if (account.platform === "patreon" && !account.campaignId)
+        account.campaignId = (
+          await resolvePatreonCampaign(account.username)
+        ).id;
       const previous = c.accounts.find(
         (a) =>
           a.platform === account.platform &&
@@ -443,6 +453,13 @@ app.delete("/api/creators/:id", (req, res) => {
   );
   res.json({ ok: true });
 });
+// The Patreon session belongs to one member; never use it for other accounts.
+function patreonSessionAllowed() {
+  const allowed = process.env.PATREON_OPENFEED_USER?.trim().toLowerCase();
+  if (!allowed) return false;
+  const row = db.prepare("SELECT username FROM users WHERE id=?").get(owner());
+  return row?.username === allowed;
+}
 const syncing = new Set<string>();
 async function syncContents() {
   if (syncing.has(owner())) return;
@@ -450,7 +467,7 @@ async function syncContents() {
   try {
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
-        ["youtube", "x", "instagram", "tiktok"].includes(a.platform),
+        ["youtube", "x", "instagram", "tiktok", "patreon"].includes(a.platform),
       )) {
         if (!enabledTypes(account).length) continue;
         const sameSource = (a: Creator["accounts"][number]) =>
@@ -459,27 +476,37 @@ async function syncContents() {
             ? a.channelId === account.channelId
             : a.username === account.username);
         try {
+          const campaignId =
+            account.platform === "patreon"
+              ? account.campaignId ||
+                (await resolvePatreonCampaign(account.username)).id
+              : undefined;
           const result =
-            account.platform === "tiktok"
-              ? await syncTikTok(account.username, c.id)
-              : account.platform === "x"
-                ? await syncX(
-                    account.username,
-                    c.id,
-                    account.xSinceId,
-                    enabledTypes(account).includes("repost"),
-                  )
-                : account.platform === "instagram"
-                  ? await syncInstagram(
+            account.platform === "patreon"
+              ? await syncPatreon(account.username, campaignId!, c.id, {
+                  useSession: patreonSessionAllowed(),
+                  since: Date.now() - retention * 86400000,
+                })
+              : account.platform === "tiktok"
+                ? await syncTikTok(account.username, c.id)
+                : account.platform === "x"
+                  ? await syncX(
                       account.username,
                       c.id,
-                      enabledTypes(account),
+                      account.xSinceId,
+                      enabledTypes(account).includes("repost"),
                     )
-                  : await syncChannel(
-                      account.channelId!,
-                      c.id,
-                      enabledTypes(account) as Kind[],
-                    );
+                  : account.platform === "instagram"
+                    ? await syncInstagram(
+                        account.username,
+                        c.id,
+                        enabledTypes(account),
+                      )
+                    : await syncChannel(
+                        account.channelId!,
+                        c.id,
+                        enabledTypes(account) as Kind[],
+                      );
           if (account.platform === "youtube") {
             const existing = posts();
             const kept = new Set(
@@ -542,6 +569,7 @@ async function syncContents() {
           }
           if ("newestId" in result && typeof result.newestId === "string")
             source.xSinceId = result.newestId;
+          if (campaignId) source.campaignId = campaignId;
           source.lastSync = new Date().toISOString();
           source.error = result.warning || undefined;
           if (!current.avatar && "avatar" in result)
@@ -551,7 +579,7 @@ async function syncContents() {
             current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : a.platform === "tiktok" ? "TikTok" : "YouTube"}: ${a.error}`
+                  ? `${platformLabels[a.platform] || a.platform}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
@@ -565,7 +593,7 @@ async function syncContents() {
             current.error = current.accounts
               .map((a) =>
                 a.error
-                  ? `${a.platform === "x" ? "X" : a.platform === "instagram" ? "Instagram" : a.platform === "tiktok" ? "TikTok" : "YouTube"}: ${a.error}`
+                  ? `${platformLabels[a.platform] || a.platform}: ${a.error}`
                   : "",
               )
               .filter(Boolean)
@@ -629,6 +657,26 @@ app.get("/api/posts/:id/detail", async (req, res) => {
   const post = posts().find((p) => p.id === req.params.id && !p.removed);
   if (!post) {
     res.sendStatus(404);
+    return;
+  }
+  if (post.platform === "patreon") {
+    const fresh = await fetchPatreonPost(post, patreonSessionAllowed());
+    const current = posts().find((p) => p.id === post.id);
+    if (!current || current.removed) {
+      res.sendStatus(404);
+      return;
+    }
+    const updated: Post = {
+      ...current,
+      title: fresh.title,
+      text: fresh.text,
+      blocks: fresh.blocks,
+      locked: fresh.locked,
+      image: fresh.image,
+      videoId: fresh.videoId,
+    };
+    savePost(updated);
+    res.json(updated);
     return;
   }
   const expanded = await expandXPost(post);

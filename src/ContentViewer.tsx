@@ -24,6 +24,7 @@ import type { Post, Creator } from "./types";
 import { loadYouTube, type YouTubePlayer } from "./youtube-player";
 import { viewerShortcut, seekPosition, timestamp } from "./viewer-shortcuts";
 import { Notes } from "./Notes";
+import { RichText } from "./RichText";
 import { LinkActions } from "./LinkActions";
 export function ContentViewer({
   post,
@@ -74,14 +75,16 @@ export function ContentViewer({
     post.images !== undefined ? post.images : post.image ? [post.image] : [];
   const [videoIndex, setVideoIndex] = useState(0);
   const videoId =
-    post.platform === "tiktok" ||
-    post.platform === "x" ||
-    post.platform === "instagram" ||
-    post.kind === "post"
-      ? undefined
-      : post.kind === "community"
-        ? post.videoId
-        : post.id;
+    post.platform === "patreon"
+      ? post.videoId
+      : post.platform === "tiktok" ||
+          post.platform === "x" ||
+          post.platform === "instagram" ||
+          post.kind === "post"
+        ? undefined
+        : post.kind === "community"
+          ? post.videoId
+          : post.id;
   const nativeVideo = embedFallback ? undefined : post.videos?.[videoIndex];
   const isTikTok =
     post.platform === "tiktok" &&
@@ -667,6 +670,7 @@ export function ContentViewer({
               </>
             ) : null}
             {post.platform !== "tiktok" &&
+            post.platform !== "patreon" &&
             images.length > 0 &&
             (!isVideo || (!!post.platform && post.platform !== "youtube")) ? (
               <div className="image-viewer">
@@ -791,7 +795,20 @@ export function ContentViewer({
                 .
               </p>
             )}
-            {post.text && <div className="viewer-text">{post.text}</div>}
+            {post.locked && (
+              <p className="player-hint">
+                This post is locked for this account.{" "}
+                <a href={post.url} target="_blank" rel="noreferrer">
+                  Open it on Patreon
+                </a>
+                .
+              </p>
+            )}
+            {post.blocks?.length ? (
+              <RichText blocks={post.blocks} />
+            ) : (
+              post.text && <div className="viewer-text">{post.text}</div>
+            )}
             <div className="viewer-tags">
               {creator.tags.map((t) => (
                 <span key={t}>{t}</span>

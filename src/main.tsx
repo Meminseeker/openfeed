@@ -40,6 +40,7 @@ import {
   Leaf,
   Menu,
   Trash2,
+  Lock,
 } from "lucide-react";
 import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
 import { enabledTypes, sourceTypes, syncLabels } from "./types";
@@ -183,8 +184,9 @@ function App({ username, logout }: { username: string; logout: () => void }) {
   const viewerPost = state.posts.find((p) => p.id === viewerIds[viewerIndex]);
   useEffect(() => {
     if (
-      viewerPost?.platform !== "x" ||
-      (viewerPost.textExpanded && viewerPost.textVersion === 2)
+      viewerPost?.platform !== "patreon" &&
+      (viewerPost?.platform !== "x" ||
+        (viewerPost.textExpanded && viewerPost.textVersion === 2))
     )
       return;
     const id = viewerPost.id;
@@ -193,16 +195,26 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         setState((s) => ({
           ...s,
           posts: s.posts.map((item) =>
-            item.id === id
+            item.id === id && detail.platform === "patreon"
               ? {
                   ...item,
-                  text: detail.text,
                   title: detail.title,
-                  textTruncated: detail.textTruncated,
-                  textExpanded: detail.textExpanded,
-                  textVersion: detail.textVersion,
+                  text: detail.text,
+                  blocks: detail.blocks,
+                  locked: detail.locked,
+                  image: detail.image,
+                  videoId: detail.videoId,
                 }
-              : item,
+              : item.id === id
+                ? {
+                    ...item,
+                    text: detail.text,
+                    title: detail.title,
+                    textTruncated: detail.textTruncated,
+                    textExpanded: detail.textExpanded,
+                    textVersion: detail.textVersion,
+                  }
+                : item,
           ),
         }));
       })
@@ -904,7 +916,8 @@ function PostCard({
             />
             {(p.kind === "video" ||
               p.kind === "short" ||
-              !!p.videos?.length) && (
+              !!p.videos?.length ||
+              (p.platform === "patreon" && !!p.videoId)) && (
               <span className="play">
                 <Play size={20} fill="currentColor" />
               </span>
@@ -913,6 +926,11 @@ function PostCard({
               <span className="album-count">{p.images.length} images</span>
             )}
             {p.duration && <span className="duration">{p.duration}</span>}
+            {p.locked && (
+              <span className="locked-badge">
+                <Lock size={13} /> Locked
+              </span>
+            )}
             <span className="kind">{postLabel(p)}</span>
           </div>
         )}
@@ -959,7 +977,9 @@ function SyncChoices({
           ? "YouTube"
           : account.platform === "x"
             ? "X"
-            : account.platform}
+            : account.platform === "patreon"
+              ? "Patreon"
+              : account.platform}
       </legend>
       {(sourceTypes[account.platform] || []).map((kind) => (
         <label key={kind}>
@@ -1102,7 +1122,8 @@ function CreatorModal({
                       syncTypes:
                         e.target.value === "tiktok"
                           ? ["video"]
-                          : e.target.value === "x"
+                          : e.target.value === "x" ||
+                              e.target.value === "patreon"
                             ? ["post"]
                             : e.target.value === "instagram"
                               ? ["post", "video", "short"]
@@ -1115,6 +1136,7 @@ function CreatorModal({
                 <option value="x">X (Twitter)</option>
                 <option value="instagram">Instagram</option>
                 <option value="tiktok">TikTok</option>
+                <option value="patreon">Patreon</option>
               </select>
               {platform === "x"
                 ? "X account"
@@ -1122,7 +1144,9 @@ function CreatorModal({
                   ? "Instagram account"
                   : platform === "tiktok"
                     ? "TikTok account"
-                    : "YouTube channel"}
+                    : platform === "patreon"
+                      ? "Patreon creator"
+                      : "YouTube channel"}
               <input
                 autoFocus
                 required
@@ -1133,15 +1157,19 @@ function CreatorModal({
                       ? "@username or an Instagram profile URL"
                       : platform === "tiktok"
                         ? "@username or a TikTok profile URL"
-                        : "@mkbhd or a YouTube channel URL"
+                        : platform === "patreon"
+                          ? "Creator name or a Patreon profile URL"
+                          : "@mkbhd or a YouTube channel URL"
                 }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
               />
               <small>
-                {platform === "instagram" || platform === "tiktok"
-                  ? "Public accounts only. The platform may block access; see source details below."
-                  : "Public channels only. No sign-in or API key needed."}
+                {platform === "patreon"
+                  ? "Member posts use the server's Patreon session; other accounts see public previews."
+                  : platform === "instagram" || platform === "tiktok"
+                    ? "Public accounts only. The platform may block access; see source details below."
+                    : "Public channels only. No sign-in or API key needed."}
               </small>
             </label>
           )}
@@ -1341,9 +1369,10 @@ function CreatorModal({
                         change={(syncTypes) => update({ syncTypes })}
                       />
                       <small>
-                        {platform === "tiktok"
-                          ? "Public videos sync on refresh. TikTok may restrict access."
-                          : "Preferences saved · Sync integration coming later"}
+                        {account.error ||
+                          (platform === "tiktok"
+                            ? "Public videos sync on refresh. TikTok may restrict access."
+                            : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
                       </small>
                     </>
                   )}

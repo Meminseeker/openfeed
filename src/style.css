@@ -1518,6 +1518,74 @@ h1 {
   color: #637157;
   margin: 20px 0;
 }
+.rich-text {
+  font-size: 15px;
+  line-height: 1.75;
+  color: #3f4a3b;
+  margin: 20px 0;
+  overflow-wrap: anywhere;
+}
+.rich-text p,
+.rich-text blockquote,
+.rich-text ul,
+.rich-text ol {
+  margin: 0 0 14px;
+  white-space: pre-wrap;
+}
+.rich-text h3,
+.rich-text h4 {
+  font-family: Manrope, sans-serif;
+  color: #282e2a;
+  margin: 24px 0 10px;
+  line-height: 1.35;
+}
+.rich-text h3 {
+  font-size: 19px;
+}
+.rich-text h4 {
+  font-size: 16px;
+}
+.rich-text ul,
+.rich-text ol {
+  padding-left: 22px;
+}
+.rich-text li {
+  margin-bottom: 6px;
+}
+.rich-text blockquote {
+  border-left: 3px solid #b9c7a6;
+  padding: 2px 0 2px 14px;
+  color: #637157;
+}
+.rich-text img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px auto;
+  border-radius: 8px;
+  background: #eeeee7;
+}
+.rich-text hr {
+  border: 0;
+  border-top: 1px solid #dfe2d6;
+  margin: 22px 0;
+}
+.rich-text a {
+  color: #35634b;
+}
+.locked-badge {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #19221bcc;
+  color: #fff;
+  padding: 4px 7px;
+  border-radius: 3px;
+  font-size: 9px;
+}
 .viewer-tags {
   display: flex;
   gap: 7px;

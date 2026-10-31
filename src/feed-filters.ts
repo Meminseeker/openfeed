@@ -8,6 +8,7 @@ export const contentFilters = [
   ["instagram:video", "IG videos"],
   ["instagram:short", "IG Reels"],
   ["tiktok:video", "TikTok videos"],
+  ["patreon:post", "Patreon posts"],
 ] as const;
 export function contentFilterKey(post: Post) {
   return `${post.platform || "youtube"}:${post.kind}`;
