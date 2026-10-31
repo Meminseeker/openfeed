@@ -134,7 +134,7 @@ Post text keeps headings, bold/underline/italic, links, lists, quotes and inline
 
 Patreon blocks most datacenter IPs, including typical cloud servers, even with a valid session. In that case let your phone fetch Patreon and upload the result: the phone uses its own network and Patreon session, and the server never needs `PATREON_SESSION_ID`.
 
-1. In OpenFeed, open the creator → Other accounts → Patreon → **Phone sync setup** → **Create phone token**. Copy the three values (the token is shown once; creating a new one revokes the old).
+1. In OpenFeed, open the creator → Other accounts → Patreon → **Phone sync setup**. If the server cannot reach Patreon, the panel asks for the creator's campaign ID once: choose **Open Patreon lookup**, copy the number after `"id":` (for example `6460488`), and save it. Then choose **Create phone token** and copy the three values (the token is shown once; creating a new one revokes the old).
 2. In the Shortcuts app create a shortcut named `OpenFeed Patreon` with two **Get Contents of URL** actions:
    - **Fetch:** URL = _Patreon URL_; Method `GET`; Header `Cookie` = `session_id=<your Patreon session_id>`.
    - **Upload:** URL = _OpenFeed upload URL_; Method `POST`; Header `Authorization` = the _Authorization header value_; Request Body `File`, set to the first action's **Contents of URL**.
