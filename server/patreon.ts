@@ -325,6 +325,16 @@ function nextPage(value: unknown) {
   }
 }
 
+// Opened in the user's own browser when the server cannot reach Patreon.
+export function patreonCampaignLookupUrl(username: string) {
+  const params = new URLSearchParams({
+    "filter[vanity]": patreonUsername(username),
+    "fields[campaign]": "vanity,name",
+    "json-api-version": "1.0",
+  });
+  return `${api}/campaigns?${params}`;
+}
+
 // The URL a phone fetches with its own Patreon session (servers are often blocked).
 export function patreonPostsUrl(campaignId: string, count = 50) {
   const params = new URLSearchParams({
@@ -362,6 +372,16 @@ export function patreonImport(
       data?.errors?.[0]?.detail
         ? `Patreon returned an error on the phone: ${String(data.errors[0].detail).slice(0, 100)}.`
         : "The phone sent an unexpected Patreon response.",
+    );
+  const vanity = (Array.isArray(data.included) ? data.included : []).find(
+    (i: any) => i?.type === "campaign" && String(i.id) === campaignId,
+  )?.attributes?.vanity;
+  if (
+    typeof vanity === "string" &&
+    vanity.toLowerCase() !== username.toLowerCase()
+  )
+    throw new Error(
+      `Campaign ${campaignId} belongs to Patreon creator ${vanity.slice(0, 64)}, not ${username}. Check the campaign ID in Phone sync setup.`,
     );
   const posts = data.data
     .filter(

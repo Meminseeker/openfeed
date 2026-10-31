@@ -78,6 +78,15 @@ globalThis.fetch = async (input, init) => {
     return new Response(
       `<script type="application/json">${JSON.stringify({ data: { user: { username: new URL(url).pathname.split("/")[1], is_private: false, edge_owner_to_timeline_media: { edges: [{ node: { shortcode: "testAlbum", edge_media_to_caption: { edges: [{ node: { text: "Instagram test album" } }] }, edge_sidecar_to_children: { edges: [{ node: { display_url: "https://scontent.cdninstagram.com/one.jpg" } }, { node: { display_url: "https://scontent.cdninstagram.com/two.jpg" } }] } } }] } } } })}</script>`,
     );
+  // Emulates Patreon's Cloudflare blocking the server for one creator.
+  if (
+    url.startsWith("https://www.patreon.com/") &&
+    /vanity%5D=blockedcreator|campaign_id%5D=7777/.test(url)
+  )
+    return Response.json(
+      { errors: [{ code: 403, detail: "Forbidden" }] },
+      { status: 403, headers: { "content-type": "application/json" } },
+    );
   if (url.startsWith("https://www.patreon.com/api/campaigns?"))
     return Response.json(
       {

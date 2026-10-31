@@ -263,6 +263,68 @@ test("accounts isolate all content paths, library imports survive retention, ses
       ),
       "a token imports only into its own account, even for a shared campaign",
     );
+    // When Patreon blocks the server, the creator is still saved and the
+    // campaign ID is entered manually for phone sync.
+    const blockedCreator = await call("creators", b.cookie, "POST", {
+      platform: "patreon",
+      channel: "BlockedCreator",
+    });
+    assert.equal(blockedCreator.accounts[0].campaignId, undefined);
+    assert.match(blockedCreator.error, /Enter the campaign ID/);
+    let blockedInfo = (
+      await call("patreon/phone-sync", b.cookie)
+    ).creators.find((x: any) => x.username === "blockedcreator");
+    assert.equal(blockedInfo.patreonUrl, undefined);
+    assert.match(blockedInfo.lookupUrl, /filter%5Bvanity%5D=blockedcreator/);
+    await call(`creators/${blockedCreator.id}`, b.cookie, "PATCH", {
+      tags: ["Finance"],
+      accounts: [{ platform: "patreon", username: "blockedcreator" }],
+    });
+    for (const campaignId of ["abc", "6460488"])
+      assert.equal(
+        (
+          await request("/api/patreon/campaign", b.cookie, "PUT", {
+            username: "blockedcreator",
+            campaignId,
+          })
+        ).status,
+        400,
+        campaignId,
+      );
+    blockedInfo = (
+      await call("patreon/campaign", b.cookie, "PUT", {
+        username: "BlockedCreator",
+        campaignId: "7777",
+      })
+    ).creators.find((x: any) => x.username === "blockedcreator");
+    assert.match(blockedInfo.patreonUrl, /campaign_id%5D=7777/);
+    assert.match(blockedInfo.importUrl, /campaign=7777$/);
+    assert.ok(
+      !(await call("state", b.cookie)).creators
+        .find((x: any) => x.id === blockedCreator.id)
+        .error?.includes("Enter the campaign ID"),
+    );
+    const vanityPage = (vanity: string) =>
+      JSON.stringify({
+        data: [phonePost("950", "7777", new Date().toISOString())],
+        included: [{ id: "7777", type: "campaign", attributes: { vanity } }],
+      });
+    const wrong = await upload(
+      vanityPage("someoneelse"),
+      replaced.token,
+      "7777",
+    );
+    assert.equal(wrong.status, 400);
+    assert.match(
+      (await wrong.json()).error,
+      /belongs to Patreon creator someoneelse/,
+    );
+    assert.deepEqual(
+      await (
+        await upload(vanityPage("blockedcreator"), replaced.token, "7777")
+      ).json(),
+      { ok: true, added: 1, updated: 0 },
+    );
     await call(`creators/${c.id}`, b.cookie, "DELETE");
     await call("read", b.cookie, "POST", { ids: ["x:123"] });
     assert.equal(

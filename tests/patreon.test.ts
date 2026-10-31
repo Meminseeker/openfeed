@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   fetchPatreonPost,
   patreonDoc,
+  patreonCampaignLookupUrl,
   patreonImport,
   patreonPostsUrl,
   patreonPost,
@@ -474,6 +475,47 @@ test("Patreon phone imports accept only the campaign's posts and explain bad upl
         "c",
       ),
     /error on the phone: Forbidden/,
+  );
+  assert.throws(
+    () =>
+      patreonImport(
+        JSON.stringify({
+          data: [own],
+          included: [
+            {
+              id: "6460488",
+              type: "campaign",
+              attributes: { vanity: "other" },
+            },
+          ],
+        }),
+        "6460488",
+        "yatirim101",
+        "c",
+      ),
+    /belongs to Patreon creator other, not yatirim101/,
+  );
+  assert.equal(
+    patreonImport(
+      JSON.stringify({
+        data: [own],
+        included: [
+          {
+            id: "6460488",
+            type: "campaign",
+            attributes: { vanity: "Yatirim101" },
+          },
+        ],
+      }),
+      "6460488",
+      "yatirim101",
+      "c",
+    ).posts.length,
+    1,
+  );
+  assert.match(
+    patreonCampaignLookupUrl("https://www.patreon.com/cw/Yatirim101"),
+    /filter%5Bvanity%5D=yatirim101/,
   );
   const url = new URL(patreonPostsUrl("6460488"));
   assert.equal(url.origin + url.pathname, "https://www.patreon.com/api/posts");

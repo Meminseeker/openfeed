@@ -8,9 +8,11 @@ interface PhoneSyncInfo {
   creators: {
     name: string;
     username: string;
+    campaignId?: string;
     lastSync?: string;
-    patreonUrl: string;
-    importUrl: string;
+    lookupUrl?: string;
+    patreonUrl?: string;
+    importUrl?: string;
   }[];
 }
 
@@ -43,21 +45,28 @@ function CopyField({ label, value }: { label: string; value: string }) {
 export function PhoneSync({ username }: { username: string }) {
   const [info, setInfo] = useState<PhoneSyncInfo>(),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const load = async (create: boolean) => {
+    [error, setError] = useState(""),
+    [campaignId, setCampaignId] = useState("");
+  const run = async (path: string, method = "GET", body?: unknown) => {
     setBusy(true);
     setError("");
     try {
-      setInfo(
-        await api("patreon/phone-sync", create ? "POST" : "GET", undefined),
-      );
+      const next: PhoneSyncInfo = await api(path, method, body);
+      // The token is returned only once; keep it visible after later updates.
+      setInfo((prev) => ({ ...next, token: next.token ?? prev?.token }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load phone sync.");
     } finally {
       setBusy(false);
     }
   };
-  const creator = info?.creators.find((c) => c.username === username);
+  const load = (create: boolean) =>
+    run("patreon/phone-sync", create ? "POST" : "GET");
+  const saveCampaign = () =>
+    run("patreon/campaign", "PUT", { username, campaignId });
+  const creator = info?.creators.find(
+    (c) => c.username.toLowerCase() === username.trim().toLowerCase(),
+  );
   if (!info)
     return (
       <button
@@ -73,6 +82,42 @@ export function PhoneSync({ username }: { username: string }) {
     <div className="phone-sync">
       {!creator ? (
         <p>Save this creator first, then reopen phone sync setup.</p>
+      ) : !creator.campaignId || !creator.patreonUrl || !creator.importUrl ? (
+        <>
+          <p>
+            The server cannot reach Patreon to look up this creator, so enter
+            the campaign ID once. Open the lookup in a browser and copy the
+            number after <code>"id":</code>.
+          </p>
+          {creator.lookupUrl && (
+            <a href={creator.lookupUrl} target="_blank" rel="noreferrer">
+              Open Patreon lookup
+            </a>
+          )}
+          <label className="copy-field">
+            <span>Patreon campaign ID</span>
+            <span>
+              <input
+                inputMode="numeric"
+                placeholder="e.g. 6460488"
+                value={campaignId}
+                onChange={(e) => setCampaignId(e.target.value.trim())}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void saveCampaign();
+                }}
+              />
+            </span>
+          </label>
+          <button
+            type="button"
+            disabled={busy || !/^\d+$/.test(campaignId)}
+            onClick={() => void saveCampaign()}
+          >
+            Save campaign ID
+          </button>
+        </>
       ) : (
         <>
           <p>

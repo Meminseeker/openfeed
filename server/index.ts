@@ -9,6 +9,7 @@ import { syncInstagram, instagramUsername } from "./instagram.ts";
 import { syncX, xUsername, expandXPost } from "./x.ts";
 import {
   fetchPatreonPost,
+  patreonCampaignLookupUrl,
   patreonImport,
   patreonPostsUrl,
   patreonUsername,
@@ -55,6 +56,18 @@ function sameUsername(platform: string, a: string, b: string) {
     }
   };
   return normalize(a) === normalize(b);
+}
+const campaignHelp =
+  "Patreon blocked the server's creator lookup. Enter the campaign ID in Phone sync setup.";
+// A missing creator is an input error; a blocked lookup must not prevent
+// saving, because phone sync works without the server reaching Patreon.
+async function lookupCampaign(username: string) {
+  try {
+    return { campaign: await resolvePatreonCampaign(username) };
+  } catch (e) {
+    if (e instanceof Error && /not found/.test(e.message)) throw e;
+    return { error: campaignHelp };
+  }
 }
 const databasePath = process.env.OPENFEED_DB || "data/openfeed.db";
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -355,10 +368,9 @@ app.post("/api/creators", async (req, res, next) => {
     const channel =
       platform === "youtube" ? await resolveChannel(input) : undefined;
     const username = usernames[platform]?.(input) ?? input;
-    const campaign =
-      platform === "patreon"
-        ? await resolvePatreonCampaign(username)
-        : undefined;
+    const lookup =
+      platform === "patreon" ? await lookupCampaign(username) : undefined;
+    const campaign = lookup?.campaign;
     if (
       creators().some((c) =>
         c.accounts.some((a) =>
@@ -383,8 +395,10 @@ app.post("/api/creators", async (req, res, next) => {
           username,
           channelId: channel?.id,
           campaignId: campaign?.id,
+          error: lookup?.error,
         },
       ],
+      error: lookup?.error ? `Patreon: ${lookup.error}` : undefined,
     };
     saveCreator(c);
     res.json(c);
@@ -493,10 +507,11 @@ app.patch("/api/creators/:id", async (req, res) => {
             : undefined,
       }));
     for (const account of other) {
-      if (account.platform === "patreon" && !account.campaignId)
-        account.campaignId = (
-          await resolvePatreonCampaign(account.username)
-        ).id;
+      if (account.platform === "patreon" && !account.campaignId) {
+        const lookup = await lookupCampaign(account.username);
+        account.campaignId = lookup.campaign?.id;
+        account.error = lookup.error;
+      }
       const previous = c.accounts.find(
         (a) =>
           a.platform === account.platform &&
@@ -514,6 +529,7 @@ app.patch("/api/creators/:id", async (req, res) => {
         account.xSinceId = undefined;
     }
     c.accounts = [...youtube, ...other];
+    c.error = creatorError(c);
   }
   saveCreator(c);
   res.json(c);
@@ -588,17 +604,69 @@ function phoneSyncInfo(req: express.Request) {
       .filter((c) => !c.libraryOnly)
       .flatMap((c) =>
         c.accounts
-          .filter((a) => a.platform === "patreon" && a.campaignId)
+          .filter((a) => a.platform === "patreon")
           .map((a) => ({
             name: c.name,
             username: a.username,
+            campaignId: a.campaignId,
             lastSync: a.phoneSync,
-            patreonUrl: patreonPostsUrl(a.campaignId!),
-            importUrl: `${origin}/api/patreon/import?campaign=${a.campaignId}`,
+            lookupUrl: lookupUrl(a.username),
+            ...(a.campaignId
+              ? {
+                  patreonUrl: patreonPostsUrl(a.campaignId),
+                  importUrl: `${origin}/api/patreon/import?campaign=${a.campaignId}`,
+                }
+              : {}),
           })),
       ),
   };
 }
+function lookupUrl(username: string) {
+  try {
+    return patreonCampaignLookupUrl(username);
+  } catch {
+    return undefined;
+  }
+}
+// Stores a campaign ID found in the user's browser when the server is blocked.
+app.put("/api/patreon/campaign", (req, res) => {
+  const username = String(req.body.username || "");
+  const campaignId = String(req.body.campaignId || "").trim();
+  if (!/^\d{1,20}$/.test(campaignId))
+    throw new Error("Enter the numeric Patreon campaign ID.");
+  const all = creators();
+  const creator = all.find((c) =>
+    c.accounts.some(
+      (a) =>
+        a.platform === "patreon" &&
+        sameUsername("patreon", a.username, username),
+    ),
+  );
+  const account = creator?.accounts.find(
+    (a) =>
+      a.platform === "patreon" && sameUsername("patreon", a.username, username),
+  );
+  if (!creator || !account) {
+    res.status(404).json({ error: "Save this Patreon account first." });
+    return;
+  }
+  if (
+    all.some((c) =>
+      c.accounts.some(
+        (a) =>
+          a !== account &&
+          a.platform === "patreon" &&
+          a.campaignId === campaignId,
+      ),
+    )
+  )
+    throw new Error("Another Patreon account already uses this campaign ID.");
+  account.campaignId = campaignId;
+  if (account.error === campaignHelp) account.error = undefined;
+  creator.error = creatorError(creator);
+  saveCreator(creator);
+  res.json(phoneSyncInfo(req));
+});
 app.get("/api/patreon/phone-sync", (req, res) => {
   res.json(phoneSyncInfo(req));
 });
@@ -635,11 +703,12 @@ async function syncContents() {
             ? a.channelId === account.channelId
             : a.username === account.username);
         try {
-          const campaignId =
-            account.platform === "patreon"
-              ? account.campaignId ||
-                (await resolvePatreonCampaign(account.username)).id
-              : undefined;
+          let campaignId = account.campaignId;
+          if (account.platform === "patreon" && !campaignId) {
+            const lookup = await lookupCampaign(account.username);
+            if (!lookup.campaign) throw new Error(lookup.error);
+            campaignId = lookup.campaign.id;
+          }
           const result =
             account.platform === "patreon"
               ? await syncPatreon(account.username, campaignId!, c.id, {
