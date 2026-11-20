@@ -373,3 +373,94 @@ export async function syncInstagram(
         : ""),
   };
 }
+
+// Instagram CDN links are signed: `oe` is the hex Unix expiry, a few days out.
+export function instagramMediaExpiry(url: string | undefined) {
+  if (!url) return;
+  try {
+    const oe = new URL(url).searchParams.get("oe");
+    if (oe && /^[0-9a-f]+$/i.test(oe)) return parseInt(oe, 16) * 1000;
+  } catch {}
+}
+const staleWithinMs = 12 * 60 * 60 * 1000;
+export function instagramMediaStale(
+  post: Pick<Post, "image" | "images" | "videos">,
+  now = Date.now(),
+) {
+  const urls = [
+    post.image,
+    ...(post.images || []),
+    ...(post.videos || []).flatMap((v) => [v.url, v.poster]),
+  ].filter((u): u is string => !!u);
+  if (!urls.length) return true;
+  return urls.some((u) => {
+    const expiry = instagramMediaExpiry(u);
+    return expiry === undefined || expiry - now < staleWithinMs;
+  });
+}
+// Single-image posts carry no JSON in the post embed, only the rendered <img>.
+export function embeddedImage(html: string) {
+  const tag = html.match(/<img\b[^>]*\bclass="EmbeddedMediaImage"[^>]*>/i)?.[0];
+  if (!tag) return;
+  const attr = (name: string) =>
+    tag
+      .match(new RegExp(`\\b${name}="([^"]*)"`, "i"))?.[1]
+      ?.replace(/&amp;/g, "&");
+  const largest = attr("srcset")
+    ?.split(",")
+    .map((part) => part.trim().split(/\s+/))
+    .filter(([u, w]) => u && /^\d+w$/.test(w || ""))
+    .sort((a, b) => parseInt(b[1]) - parseInt(a[1]))[0]?.[0];
+  return mediaUrl(largest) || mediaUrl(attr("src"));
+}
+const failedRefreshes = new Map<string, number>();
+// Re-reads the public post embed for a stored post when its media links are
+// about to expire. The shortcode comes from the stored post id, never from input.
+export async function refreshInstagramMedia(
+  post: Post,
+  now = Date.now(),
+): Promise<Pick<Post, "image" | "images" | "videos"> | undefined> {
+  const shortcode = post.id.match(/^instagram:([a-zA-Z0-9_-]+)$/)?.[1];
+  if (!shortcode || !instagramMediaStale(post, now)) return;
+  if ((failedRefreshes.get(post.id) || 0) > now) return;
+  try {
+    const response = await fetch(
+      `https://www.instagram.com/p/${shortcode}/embed/captioned/`,
+      {
+        headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!response.ok)
+      throw new Error(`Instagram post unavailable (HTTP ${response.status}).`);
+    const html = await response.text();
+    const media = pagePost(html, shortcode);
+    if (media) {
+      const fresh = instagramPosts(
+        [{ ...media, owner: undefined, shortcode }],
+        post.sourceUsername || "",
+        post.creatorId,
+        ["post", "video", "short"],
+      )[0];
+      if (fresh && (fresh.images?.length || fresh.videos?.length))
+        return {
+          image: fresh.image,
+          images: fresh.images,
+          videos: fresh.videos,
+        };
+    }
+    const image = embeddedImage(html);
+    if (!image) throw new Error("Instagram did not expose this post's media.");
+    return {
+      image,
+      images: [image, ...(post.images || []).slice(1)],
+      videos: (post.videos || []).map((v, i) =>
+        i === 0 ? { ...v, poster: image } : v,
+      ),
+    };
+  } catch (error) {
+    if (failedRefreshes.size > 500) failedRefreshes.clear();
+    failedRefreshes.set(post.id, now + 5 * 60 * 1000);
+    throw error;
+  }
+}

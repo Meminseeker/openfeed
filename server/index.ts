@@ -5,7 +5,11 @@ import { initializeAccounts, installAuth, owner, asOwner } from "./auth.ts";
 import { syncTikTok, tiktokUsername } from "./tiktok.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
-import { syncInstagram, instagramUsername } from "./instagram.ts";
+import {
+  syncInstagram,
+  instagramUsername,
+  refreshInstagramMedia,
+} from "./instagram.ts";
 import {
   syncX,
   syncXSources,
@@ -912,6 +916,23 @@ app.get("/api/posts/:id/detail", async (req, res) => {
       image: fresh.image,
       videoId: fresh.videoId,
     };
+    savePost(updated);
+    res.json(updated);
+    return;
+  }
+  if (post.platform === "instagram") {
+    // Signed Instagram media links expire after a few days; renew them on open.
+    const fresh = await refreshInstagramMedia(post);
+    const current = posts().find((p) => p.id === post.id);
+    if (!current || current.removed) {
+      res.sendStatus(404);
+      return;
+    }
+    if (!fresh) {
+      res.json(current);
+      return;
+    }
+    const updated: Post = { ...current, ...fresh };
     savePost(updated);
     res.json(updated);
     return;

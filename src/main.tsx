@@ -186,6 +186,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
   useEffect(() => {
     if (
       viewerPost?.platform !== "patreon" &&
+      viewerPost?.platform !== "instagram" &&
       (viewerPost?.platform !== "x" ||
         (viewerPost.textExpanded && viewerPost.textVersion === 2))
     )
@@ -196,26 +197,33 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         setState((s) => ({
           ...s,
           posts: s.posts.map((item) =>
-            item.id === id && detail.platform === "patreon"
+            item.id === id && detail.platform === "instagram"
               ? {
                   ...item,
-                  title: detail.title,
-                  text: detail.text,
-                  blocks: detail.blocks,
-                  locked: detail.locked,
                   image: detail.image,
-                  videoId: detail.videoId,
+                  images: detail.images,
+                  videos: detail.videos,
                 }
-              : item.id === id
+              : item.id === id && detail.platform === "patreon"
                 ? {
                     ...item,
-                    text: detail.text,
                     title: detail.title,
-                    textTruncated: detail.textTruncated,
-                    textExpanded: detail.textExpanded,
-                    textVersion: detail.textVersion,
+                    text: detail.text,
+                    blocks: detail.blocks,
+                    locked: detail.locked,
+                    image: detail.image,
+                    videoId: detail.videoId,
                   }
-                : item,
+                : item.id === id
+                  ? {
+                      ...item,
+                      text: detail.text,
+                      title: detail.title,
+                      textTruncated: detail.textTruncated,
+                      textExpanded: detail.textExpanded,
+                      textVersion: detail.textVersion,
+                    }
+                  : item,
           ),
         }));
       })

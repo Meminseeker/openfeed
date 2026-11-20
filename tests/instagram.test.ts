@@ -5,6 +5,9 @@ import {
   instagramPosts,
   parseInstagramProfile,
   syncInstagram,
+  instagramMediaStale,
+  embeddedImage,
+  refreshInstagramMedia,
 } from "../server/instagram.ts";
 const image = "https://scontent.cdninstagram.com/one.jpg",
   video = "https://video.xx.fbcdn.net/video.mp4";
@@ -351,4 +354,144 @@ test("collaboration details enrich only a listed public shortcode and retain the
       old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i]),
     );
   }
+});
+
+const oe = (ms: number) =>
+  Math.floor(ms / 1000)
+    .toString(16)
+    .toUpperCase();
+const refreshNow = Date.parse("2026-11-20T12:00:00Z");
+const signed = (name: string, expires: number) =>
+  `https://scontent.cdninstagram.com/${name}.jpg?oe=${oe(expires)}`;
+async function withInstagramPage<T>(
+  html: string,
+  run: (urls: string[]) => Promise<T>,
+) {
+  const oldFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: any) => {
+    urls.push(String(input));
+    return new Response(html, { status: 200 });
+  }) as typeof fetch;
+  try {
+    return await run(urls);
+  } finally {
+    globalThis.fetch = oldFetch;
+  }
+}
+const storedPost = (id: string, extra: any = {}) => ({
+  id,
+  creatorId: "creator",
+  platform: "instagram" as const,
+  sourceUsername: "test",
+  title: "Stored",
+  url: "https://www.instagram.com/p/abc/",
+  kind: "post" as const,
+  published: "2026-11-10T00:00:00.000Z",
+  read: false,
+  saved: true,
+  ...extra,
+});
+
+test("Instagram media is stale when any signed link expires within 12 hours or has no expiry", () => {
+  const later = refreshNow + 3 * 86400000;
+  assert.equal(
+    instagramMediaStale({ image: signed("a", later) }, refreshNow),
+    false,
+  );
+  assert.equal(
+    instagramMediaStale(
+      {
+        image: signed("a", later),
+        videos: [{ url: signed("v", refreshNow + 3600000) }],
+      },
+      refreshNow,
+    ),
+    true,
+  );
+  assert.equal(instagramMediaStale({ image: image }, refreshNow), true);
+  assert.equal(instagramMediaStale({}, refreshNow), true);
+});
+
+test("opening an Instagram post with fresh links does not contact Instagram", async () => {
+  await withInstagramPage("", async (urls) => {
+    const post = storedPost("instagram:abc", {
+      image: signed("a", refreshNow + 3 * 86400000),
+    });
+    assert.equal(await refreshInstagramMedia(post, refreshNow), undefined);
+    assert.equal(urls.length, 0);
+  });
+});
+
+test("expired Instagram video and carousel links are renewed from the public post embed JSON", async () => {
+  const later = refreshNow + 2 * 86400000;
+  const page = `<script type="application/json">${JSON.stringify({
+    shortcode_media: {
+      shortcode: "abc",
+      is_video: true,
+      product_type: "clips",
+      display_url: signed("poster", later),
+      video_url: `https://video.xx.fbcdn.net/new.mp4?oe=${oe(later)}`,
+      owner: { username: "someone-else", is_private: false },
+    },
+  })}</script>`;
+  await withInstagramPage(page, async (urls) => {
+    const fresh = await refreshInstagramMedia(
+      storedPost("instagram:abc", {
+        image: signed("old", refreshNow - 86400000),
+        videos: [{ url: "https://video.xx.fbcdn.net/old.mp4" }],
+      }),
+      refreshNow,
+    );
+    assert.deepEqual(urls, [
+      "https://www.instagram.com/p/abc/embed/captioned/",
+    ]);
+    assert.equal(
+      fresh?.videos?.[0].url,
+      `https://video.xx.fbcdn.net/new.mp4?oe=${oe(later)}`,
+    );
+    assert.equal(fresh?.image, signed("poster", later));
+  });
+});
+
+test("single-image Instagram posts are renewed from the embedded image, preferring the largest size", async () => {
+  const later = refreshNow + 2 * 86400000;
+  const page = `<img class="EmbeddedMediaImage" alt="x" src="${signed("small", later)}&amp;a=1" srcset="${signed("w640", later)} 640w,${signed("w1080", later)}&amp;b=2 1080w">`;
+  assert.equal(embeddedImage(page), `${signed("w1080", later)}&b=2`);
+  assert.equal(
+    embeddedImage(
+      `<img class="EmbeddedMediaImage" src="https://evil.test/a.jpg">`,
+    ),
+    undefined,
+  );
+  await withInstagramPage(page, async () => {
+    const fresh = await refreshInstagramMedia(
+      storedPost("instagram:img1", {
+        image: signed("old", refreshNow - 1),
+        images: [signed("old", refreshNow - 1)],
+      }),
+      refreshNow,
+    );
+    assert.deepEqual(fresh?.images, [`${signed("w1080", later)}&b=2`]);
+  });
+});
+
+test("Instagram media refresh ignores malformed ids and backs off after a failure", async () => {
+  await withInstagramPage("<html></html>", async (urls) => {
+    assert.equal(
+      await refreshInstagramMedia(storedPost("instagram:../x"), refreshNow),
+      undefined,
+    );
+    assert.equal(urls.length, 0);
+    const post = storedPost("instagram:gone1", { image: image });
+    await assert.rejects(
+      refreshInstagramMedia(post, refreshNow),
+      /did not expose/,
+    );
+    assert.equal(
+      await refreshInstagramMedia(post, refreshNow + 60000),
+      undefined,
+    );
+    assert.equal(urls.length, 1);
+  });
 });
