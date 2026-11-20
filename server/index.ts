@@ -6,7 +6,14 @@ import { syncTikTok, tiktokUsername } from "./tiktok.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
 import { syncInstagram, instagramUsername } from "./instagram.ts";
-import { syncX, xUsername, expandXPost } from "./x.ts";
+import {
+  syncX,
+  syncXSources,
+  socialDataEnabled,
+  xSourceKey,
+  xUsername,
+  expandXPost,
+} from "./x.ts";
 import {
   fetchPatreonPost,
   patreonCampaignLookupUrl,
@@ -690,6 +697,38 @@ async function syncContents() {
   if (syncing.has(owner())) return;
   syncing.add(owner());
   try {
+    // With SocialData, all X accounts are fetched up front in shared OR searches.
+    const xResults = socialDataEnabled()
+      ? await syncXSources(
+          creators().flatMap((c) =>
+            c.accounts
+              .filter((a) => a.platform === "x" && enabledTypes(a).length)
+              .map((a) => ({
+                username: a.username,
+                sinceId: a.xSinceId,
+                checkedAt: a.lastSync,
+                includeReposts: enabledTypes(a).includes("repost"),
+              })),
+          ),
+          Date.now(),
+          retention,
+        )
+      : undefined;
+    const prefetchedX = (
+      account: Creator["accounts"][number],
+      creatorId: string,
+    ) => {
+      const includeReposts = enabledTypes(account).includes("repost");
+      const result = xResults!.get(
+        xSourceKey(account.username, includeReposts),
+      );
+      if (!result || result instanceof Error)
+        throw result || new Error("X refresh failed.");
+      return {
+        ...result,
+        posts: result.posts.map((p) => ({ ...p, creatorId })),
+      };
+    };
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
         ["youtube", "x", "instagram", "tiktok", "patreon"].includes(a.platform),
@@ -718,12 +757,14 @@ async function syncContents() {
               : account.platform === "tiktok"
                 ? await syncTikTok(account.username, c.id)
                 : account.platform === "x"
-                  ? await syncX(
-                      account.username,
-                      c.id,
-                      account.xSinceId,
-                      enabledTypes(account).includes("repost"),
-                    )
+                  ? xResults
+                    ? prefetchedX(account, c.id)
+                    : await syncX(
+                        account.username,
+                        c.id,
+                        account.xSinceId,
+                        enabledTypes(account).includes("repost"),
+                      )
                   : account.platform === "instagram"
                     ? await syncInstagram(
                         account.username,

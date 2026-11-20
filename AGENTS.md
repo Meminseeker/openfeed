@@ -23,7 +23,7 @@ OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, In
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run dev`                    | `tsx server/index.ts`. Serves the app on http://localhost:3000 (loopback). Vite HMR uses its own default WebSocket port, 24678, because no `hmr.server` is configured.                                                                                                                                                                                                |
 | `npm start`                      | `NODE_ENV=production tsx …`. This still runs under **tsx**, so it does not reproduce the Docker runtime. To check the real production runtime, run `npm run build && NODE_ENV=production node server/index.ts`, or the production-runtime test.                                                                                                                       |
-| `npm test`                       | `tsx --test tests/*.test.ts`. 75 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                     |
+| `npm test`                       | `tsx --test tests/*.test.ts`. 89 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                     |
 | `npx tsx --test tests/x.test.ts` | Runs a single file. Add `--test-name-pattern="regex"` to filter by test name.                                                                                                                                                                                                                                                                                         |
 | `npm run build`                  | `tsc --noEmit && vite build`. `tsc` type-checks `src`, `server`, `tests` and `vite.config.ts`.                                                                                                                                                                                                                                                                        |
 | `npm run format`                 | Prettier with default settings (no config file): double quotes, semicolons, 2 spaces, trailing commas, 80 columns. **This script reformats `tests/fixtures/x-long-*.html` (there is no `.prettierignore`), and tests depend on those files' exact bytes.** Restore them afterwards with `git checkout tests/fixtures`, or run Prettier only on the files you changed. |
@@ -55,7 +55,7 @@ server/
   public-page.ts   fetchPublicPage(): retrying fetch with redirect validation and YouTube consent handling
   youtube.ts       resolveChannel, syncChannel (RSS + channel tabs), initialData, publicPosts
   youtube-dates.ts videoPublished, resolveVideoDates (precise dates from watch pages, 3 concurrent)
-  x.ts             syncX (syndication or official API v2), parseXTimeline, expandXPost, fetchXStatus (FxEmbed)
+  x.ts             syncX (syndication, official API v2 or SocialData), syncXSources (batched SocialData), parseXTimeline, expandXPost, fetchXStatus (FxEmbed)
   instagram.ts     syncInstagram (public embed or Meta Business Discovery), instagramPosts
   tiktok.ts        syncTikTok (creator embed, then profile JSON fallback)
   patreon.ts       syncPatreon, resolvePatreonCampaign, patreonDoc (TipTap → RichBlock), fetchPatreonPost
@@ -203,7 +203,7 @@ All `/api/*` routes except `/api/auth/*` require a session. What a route returns
 - A per-owner lock prevents concurrent syncs for the same account.
 - Accounts are processed one at a time, dispatched by platform:
   - YouTube: `syncChannel(channelId, creatorId, types)`, followed by `resolveVideoDates` for posts that are kept or not yet expired.
-  - X: `syncX(username, creatorId, xSinceId, includeReposts)`.
+  - X: `syncX(username, creatorId, xSinceId, includeReposts)`. With `SOCIALDATA_API_KEY`, `syncContents` instead calls `syncXSources` once before the loop for all of the owner's X accounts, and the loop takes each account's prefetched result (`prefetchedX`, keyed by `xSourceKey`), re-assigning `creatorId`.
   - Instagram: `syncInstagram(username, creatorId, types)`.
   - TikTok: `syncTikTok(username, creatorId)`.
   - Patreon: `syncPatreon(username, campaignId, creatorId, {useSession, since})`. A missing `campaignId` is resolved and saved on the account.
@@ -268,7 +268,7 @@ In `index.ts`:
   - **`fetchPublicPage`** (`public-page.ts`) adds retries: 3 attempts in total, with 250/500 ms backoff, on 429, 5xx and network errors. Each attempt has a 15 s timeout. It also adds validated manual redirects, including YouTube `consent.youtube.com/m`, which is accepted only if its `continue` URL matches. Only `youtube-dates.ts` and `library.ts` use it.
   - **Call `fetch` and read `process.env` at call time**, never at import time. Tests swap `globalThis.fetch` and env vars per test.
 - **Optional official APIs:** they are selected by env vars and never fall back silently to public scraping.
-  - X: `X_BEARER_TOKEN`.
+  - X: `SOCIALDATA_API_KEY` (third-party, takes precedence) or `X_BEARER_TOKEN`.
   - Instagram: `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID` and `INSTAGRAM_GRAPH_VERSION`, all three together.
 - **YouTube:**
   - RSS (about 15 items) gives exact dates. The channel tabs `/videos`, `/shorts` and `/posts` give the classification.
@@ -277,6 +277,12 @@ In `index.ts`:
   - Relative dates such as "3 weeks ago" become `publishedApproximate:true`. `resolveVideoDates` later fetches each watch page for the exact ISO `publishDate`.
 - **X:**
   - Without a token, data comes from the syndication timeline (`__NEXT_DATA__`). With a token, the official v2 API is used; the response is re-serialized into the same fake `__NEXT_DATA__` shape so `parseXTimeline` handles both paths.
+  - **SocialData** (`syncXSources`): `GET api.socialdata.tools/twitter/search?type=Latest` with `Authorization: Bearer`. Responses are v1.1-shaped tweets (`full_text`, `extended_entities`, `retweeted_status`) but the date is `tweet_created_at`; they are wrapped into the fake `__NEXT_DATA__` shape too.
+    - Accounts with an `xSinceId` are grouped into `(from:a OR from:b …)` queries of at most 500 characters, split by `includeReposts` (non-repost batches add `-filter:nativeretweets`). `since_time` = 10 min before the oldest `account.lastSync` in the batch (or the `xSinceId` snowflake time), floored at the retention window. Results are split per `user.screen_name` and filtered by `xSinceId`. Pages follow `next_cursor` until empty, up to 10.
+    - Accounts without `xSinceId` (new, or after a sync-type change) are searched alone, 1 page; an empty result triggers `/twitter/user/<name>` (404 → not found, `protected` → private).
+    - A module-level slot spaces every SocialData request by `SOCIALDATA_MIN_INTERVAL_MS` (default 20000), keeping empty responses within the free 3 per minute. Tests set it to `0`.
+    - Posts that don't look truncated get `textExpanded: true, textVersion: 2`, so the client skips the detail repair.
+    - Errors: 402 → empty balance, 401/403 → bad key. A batch error is set on every account in that batch.
   - `expandXPost` repairs truncated text. It uses the canonical X page `<h1>` plus FxEmbed (`api.fxtwitter.com`) and keeps a 5-minute in-memory cache.
 - **Instagram:** the public profile embed gives about 6 posts. Video items among the first 6 media items are enriched one at a time through `/p/<code>/embed/captioned/`.
 - **Patreon** (`patreon.ts`):
@@ -388,6 +394,8 @@ There is no registry. The platform list is hardcoded in several places:
 | `OPENFEED_DOMAIN`, `ACME_EMAIL`                                          |                    | Compose/Caddy only. Both are required by `compose.yaml`.                                                                                                                              |
 | `OPENFEED_RETENTION_DAYS`                                                | 7                  | Feed post retention, in days. Unset means 7, but set-but-empty makes boot throw.                                                                                                      |
 | `OPENFEED_SETUP_TOKEN`                                                   |                    | Required to claim a pre-accounts (legacy) workspace                                                                                                                                   |
+| `SOCIALDATA_API_KEY`                                                     |                    | Switches every X source to SocialData batched search (takes precedence over `X_BEARER_TOKEN`)                                                                                         |
+| `SOCIALDATA_MIN_INTERVAL_MS`                                             | 20000              | Minimum gap between SocialData requests, server-wide                                                                                                                                  |
 | `X_BEARER_TOKEN`                                                         |                    | Switches every X source to the official API                                                                                                                                           |
 | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_GRAPH_VERSION` |                    | Meta Business Discovery; all three are required together                                                                                                                              |
 | `PATREON_SESSION_ID`, `PATREON_OPENFEED_USER`                            |                    | Patreon `session_id` cookie, used only for the OpenFeed user named by `PATREON_OPENFEED_USER`. Others get locked previews.                                                            |

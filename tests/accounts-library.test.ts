@@ -30,6 +30,7 @@ test("accounts isolate all content paths, library imports survive retention, ses
             OPENFEED_PUBLIC_ORIGIN: "",
             OPENFEED_RETENTION_DAYS: "7",
             X_BEARER_TOKEN: "",
+            SOCIALDATA_API_KEY: "",
             INSTAGRAM_ACCESS_TOKEN: "",
             INSTAGRAM_USER_ID: "",
             PATREON_SESSION_ID: "fixture-session",

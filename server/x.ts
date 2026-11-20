@@ -169,6 +169,17 @@ export async function syncX(
   includeReposts = true,
 ) {
   const username = xUsername(input);
+  if (socialDataEnabled()) {
+    const result = (
+      await syncXSources([{ username, sinceId, includeReposts }])
+    ).get(xSourceKey(username, includeReposts));
+    if (!result || result instanceof Error)
+      throw result || new Error("X refresh failed.");
+    return {
+      ...result,
+      posts: result.posts.map((p) => ({ ...p, creatorId })),
+    };
+  }
   if (process.env.X_BEARER_TOKEN)
     return syncOfficialX(
       username,
@@ -298,6 +309,227 @@ async function syncOfficialX(
       ? "X refresh is limited to 30 new posts/reposts. Older excess items were skipped to keep costs and volume down."
       : undefined,
   };
+}
+
+// SocialData (socialdata.tools) is a paid third-party X data service. Several
+// accounts share one `(from:a OR from:b)` search, bounded by `since_time`, so a
+// refresh costs one request per batch instead of one per account.
+export function socialDataEnabled() {
+  return !!process.env.SOCIALDATA_API_KEY?.trim();
+}
+export type XSource = {
+  username: string;
+  sinceId?: string;
+  // Last successful refresh (ISO); bounds the next search.
+  checkedAt?: string;
+  includeReposts: boolean;
+};
+export type XSyncResult = Omit<ReturnType<typeof parseXTimeline>, "warning"> & {
+  warning?: string;
+  newestId?: string;
+};
+export const xSourceKey = (username: string, includeReposts: boolean) =>
+  `${username.toLowerCase()}|${includeReposts ? "reposts" : "posts"}`;
+
+const socialDataQueryLimit = 500;
+const socialDataMaxPages = 10;
+// Re-read posts from shortly before the last refresh, in case search indexing lagged.
+const socialDataOverlapMs = 10 * 60 * 1000;
+let socialDataNextSlot = 0;
+
+// Requests are spaced (20 s by default, so at most 3 per minute). SocialData
+// does not bill the first 3 empty responses per minute, so quiet hourly checks
+// stay free.
+async function socialData(path: string): Promise<any> {
+  const gap = Number(process.env.SOCIALDATA_MIN_INTERVAL_MS ?? 20000);
+  const interval = Number.isFinite(gap) && gap >= 0 ? gap : 20000;
+  const now = Date.now();
+  const slot = Math.max(now, socialDataNextSlot);
+  socialDataNextSlot = slot + interval;
+  if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
+  const response = await fetch(`https://api.socialdata.tools${path}`, {
+    headers: {
+      Authorization: `Bearer ${process.env.SOCIALDATA_API_KEY?.trim()}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(30000),
+    redirect: "error",
+  });
+  if (response.status === 404) return null;
+  if (response.status === 402)
+    throw new Error(
+      "SocialData balance is empty. Top up at socialdata.tools to refresh X.",
+    );
+  if (response.status === 401 || response.status === 403)
+    throw new Error("SocialData rejected the API key (SOCIALDATA_API_KEY).");
+  if (!response.ok)
+    throw new Error(
+      `SocialData request failed (HTTP ${response.status}). Try again later.`,
+    );
+  return response.json();
+}
+
+// X ids are snowflakes: the top bits are milliseconds since 2010-11-04.
+function snowflakeTime(id?: string) {
+  if (!id || !/^\d+$/.test(id)) return;
+  return Number(BigInt(id) >> 22n) + 1288834974657;
+}
+
+async function searchSocialData(query: string, maxPages: number) {
+  const tweets: any[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const json = await socialData(
+      `/twitter/search?type=Latest&query=${encodeURIComponent(query)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    );
+    const batch = Array.isArray(json?.tweets) ? json.tweets : [];
+    tweets.push(...batch);
+    cursor = typeof json?.next_cursor === "string" ? json.next_cursor : "";
+    if (!batch.length || !cursor) return { tweets, complete: true };
+  }
+  return { tweets, complete: false };
+}
+
+function socialDataResult(
+  tweets: any[],
+  source: XSource,
+  complete: boolean,
+): XSyncResult {
+  const since =
+    source.sinceId && /^\d+$/.test(source.sinceId)
+      ? BigInt(source.sinceId)
+      : 0n;
+  const own = tweets.filter(
+    (t) =>
+      t?.user?.screen_name?.toLowerCase() === source.username.toLowerCase() &&
+      /^\d+$/.test(t.id_str || "") &&
+      BigInt(t.id_str) > since,
+  );
+  const entries = own.map((t) => ({
+    type: "tweet",
+    content: {
+      tweet: { ...t, created_at: t.tweet_created_at ?? t.created_at },
+    },
+  }));
+  const result = parseXTimeline(
+    `<script id="__NEXT_DATA__">${JSON.stringify({ props: { pageProps: { timeline: { entries } } } }).replaceAll("<", "\\u003c")}</script>`,
+    source.username,
+    "",
+    source.includeReposts,
+  );
+  const newestId = own.reduce(
+    (latest: string | undefined, t: any) =>
+      !latest || BigInt(t.id_str) > BigInt(latest) ? t.id_str : latest,
+    source.sinceId,
+  );
+  return {
+    ...result,
+    // SocialData returns the full text of long posts; skip the lazy repair.
+    posts: result.posts.map((p) =>
+      p.textTruncated ? p : { ...p, textExpanded: true, textVersion: 2 },
+    ),
+    newestId,
+    warning: complete
+      ? undefined
+      : "More new X posts arrived than one refresh reads; the oldest were skipped.",
+  };
+}
+
+// Fetches every source with as few searches as possible. Returns a result or an
+// Error per xSourceKey, so one failing batch never affects another.
+export async function syncXSources(
+  sources: XSource[],
+  now = Date.now(),
+  retentionDays = 7,
+): Promise<Map<string, XSyncResult | Error>> {
+  const results = new Map<string, XSyncResult | Error>();
+  const floor = now - retentionDays * 86400000;
+  const unique = new Map<string, XSource & { from: number }>();
+  for (const source of sources) {
+    let username: string;
+    try {
+      username = xUsername(source.username);
+    } catch (error) {
+      results.set(
+        xSourceKey(source.username, source.includeReposts),
+        error as Error,
+      );
+      continue;
+    }
+    const key = xSourceKey(username, source.includeReposts);
+    if (unique.has(key)) continue;
+    const last = Date.parse(source.checkedAt || "");
+    const checked = Number.isFinite(last)
+      ? last
+      : snowflakeTime(source.sinceId);
+    unique.set(key, {
+      ...source,
+      username,
+      from: Math.max(floor, (checked ?? floor) - socialDataOverlapMs),
+    });
+  }
+  const suffix = (includeReposts: boolean, from: number) =>
+    ` -filter:replies${includeReposts ? "" : " -filter:nativeretweets"} since_time:${Math.floor(from / 1000)}`;
+
+  // Never-synced accounts (no cursor yet) are searched alone, one page, so a
+  // wrong or private username is reported instead of silently returning nothing.
+  for (const [key, source] of unique) {
+    if (source.sinceId) continue;
+    unique.delete(key);
+    try {
+      const { tweets } = await searchSocialData(
+        `from:${source.username}${suffix(source.includeReposts, floor)}`,
+        1,
+      );
+      if (!tweets.length) {
+        const user = await socialData(`/twitter/user/${source.username}`);
+        if (!user) throw new Error("X account was not found.");
+        if (user.protected)
+          throw new Error("Private X accounts are not supported.");
+      }
+      results.set(key, socialDataResult(tweets, source, true));
+    } catch (error) {
+      results.set(key, error as Error);
+    }
+  }
+
+  // Group the rest into OR queries under the length limit. Sorting by start
+  // time keeps accounts checked at similar times together, so a batch rarely
+  // re-reads much from accounts that were checked more recently.
+  for (const includeReposts of [false, true]) {
+    const pending = [...unique.entries()]
+      .filter(([, s]) => s.includeReposts === includeReposts)
+      .sort(([, a], [, b]) => a.from - b.from);
+    while (pending.length) {
+      const batch = [pending.shift()!];
+      const query = () =>
+        `(${batch.map(([, s]) => `from:${s.username}`).join(" OR ")})${suffix(includeReposts, batch[0][1].from)}`;
+      while (pending.length) {
+        batch.push(pending[0]);
+        if (query().length > socialDataQueryLimit) {
+          batch.pop();
+          break;
+        }
+        pending.shift();
+      }
+      try {
+        const { tweets, complete } = await searchSocialData(
+          query(),
+          socialDataMaxPages,
+        );
+        for (const [key, source] of batch) {
+          try {
+            results.set(key, socialDataResult(tweets, source, complete));
+          } catch (error) {
+            results.set(key, error as Error);
+          }
+        }
+      } catch (error) {
+        for (const [key] of batch) results.set(key, error as Error);
+      }
+    }
+  }
+  return results;
 }
 
 function decodeText(text: string) {

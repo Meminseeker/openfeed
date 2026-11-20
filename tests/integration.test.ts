@@ -72,6 +72,7 @@ test("API persists creator tags, linked accounts, saved/read states; isolates or
           env: {
             ...process.env,
             X_BEARER_TOKEN: "",
+            SOCIALDATA_API_KEY: "",
             INSTAGRAM_ACCESS_TOKEN: "",
             INSTAGRAM_USER_ID: "",
             PATREON_SESSION_ID: "",

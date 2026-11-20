@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseXTimeline, xUsername, syncX } from "../server/x.ts";
+import {
+  parseXTimeline,
+  xUsername,
+  syncX,
+  syncXSources,
+  xSourceKey,
+} from "../server/x.ts";
 const tweet = (id: string, extra: any = {}) => ({
   id_str: id,
   created_at: "Mon Sep 08 09:00:17 +0000 2025",
@@ -350,4 +356,275 @@ test("detail repair retries legacy expansions and handles short previews and rep
   } finally {
     globalThis.fetch = original;
   }
+});
+
+const sdTweet = (id: string, user: string, extra: any = {}) => ({
+  id_str: id,
+  tweet_created_at: "2026-11-20T10:00:00.000000Z",
+  full_text: `Post ${id}`,
+  user: {
+    screen_name: user,
+    protected: false,
+    profile_image_url_https: "https://pbs.twimg.com/a.jpg",
+  },
+  ...extra,
+});
+async function withSocialData(
+  respond: (url: URL, init: RequestInit) => any,
+  run: (calls: { url: URL; init: RequestInit }[]) => Promise<void>,
+  interval = "0",
+) {
+  const oldFetch = globalThis.fetch;
+  const oldKey = process.env.SOCIALDATA_API_KEY;
+  const oldInterval = process.env.SOCIALDATA_MIN_INTERVAL_MS;
+  const calls: { url: URL; init: RequestInit }[] = [];
+  process.env.SOCIALDATA_API_KEY = "test-only-key";
+  process.env.SOCIALDATA_MIN_INTERVAL_MS = interval;
+  globalThis.fetch = (async (input: any, init: RequestInit) => {
+    const url = new URL(String(input));
+    calls.push({ url, init });
+    const body = respond(url, init);
+    return typeof body === "number"
+      ? new Response("{}", { status: body })
+      : Response.json(body);
+  }) as typeof fetch;
+  try {
+    await run(calls);
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.SOCIALDATA_API_KEY;
+    else process.env.SOCIALDATA_API_KEY = oldKey;
+    if (oldInterval === undefined)
+      delete process.env.SOCIALDATA_MIN_INTERVAL_MS;
+    else process.env.SOCIALDATA_MIN_INTERVAL_MS = oldInterval;
+  }
+}
+const now = Date.parse("2026-11-20T12:00:00Z");
+const checked = "2026-11-20T11:00:00.000Z";
+
+test("SocialData batches accounts into one OR search bounded by the last refresh and splits posts per account", async () => {
+  const long = "x".repeat(2000);
+  await withSocialData(
+    (url) =>
+      url.searchParams.get("cursor")
+        ? { tweets: [], next_cursor: null }
+        : {
+            tweets: [
+              sdTweet("300", "Alice", {
+                full_text: long,
+                extended_entities: {
+                  media: [
+                    {
+                      type: "video",
+                      media_url_https: "https://pbs.twimg.com/p.jpg",
+                      video_info: {
+                        variants: [
+                          {
+                            content_type: "video/mp4",
+                            bitrate: 832000,
+                            url: "https://video.twimg.com/low.mp4",
+                          },
+                          {
+                            content_type: "video/mp4",
+                            bitrate: 2176000,
+                            url: "https://video.twimg.com/high.mp4",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              }),
+              sdTweet("250", "bob"),
+              sdTweet("90", "bob"),
+              sdTweet("280", "carol"),
+            ],
+            next_cursor: "next",
+          },
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          {
+            username: "alice",
+            sinceId: "100",
+            checkedAt: checked,
+            includeReposts: false,
+          },
+          {
+            username: "bob",
+            sinceId: "100",
+            checkedAt: checked,
+            includeReposts: false,
+          },
+        ],
+        now,
+        7,
+      );
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].url.origin, "https://api.socialdata.tools");
+      assert.equal(
+        calls[0].url.searchParams.get("query"),
+        `(from:alice OR from:bob) -filter:replies -filter:nativeretweets since_time:${Math.floor((Date.parse(checked) - 600000) / 1000)}`,
+      );
+      assert.equal(calls[0].url.searchParams.get("type"), "Latest");
+      assert.equal(calls[1].url.searchParams.get("cursor"), "next");
+      assert.equal(
+        (calls[0].init.headers as Record<string, string>).Authorization,
+        "Bearer test-only-key",
+      );
+      const alice = results.get(xSourceKey("alice", false));
+      const bob = results.get(xSourceKey("bob", false));
+      assert.ok(alice && !(alice instanceof Error));
+      assert.ok(bob && !(bob instanceof Error));
+      assert.deepEqual(
+        alice.posts.map((p) => p.id),
+        ["x:300"],
+      );
+      assert.equal(alice.posts[0].text, long);
+      assert.equal(alice.posts[0].textExpanded, true);
+      assert.equal(alice.posts[0].published, "2026-11-20T10:00:00.000Z");
+      assert.equal(
+        alice.posts[0].videos?.[0].url,
+        "https://video.twimg.com/high.mp4",
+      );
+      assert.equal(alice.newestId, "300");
+      assert.equal(alice.warning, undefined);
+      // Bob's post at or before his cursor is dropped; carol was not requested.
+      assert.deepEqual(
+        bob.posts.map((p) => p.id),
+        ["x:250"],
+      );
+      assert.equal(results.size, 2);
+    },
+  );
+});
+
+test("SocialData keeps repost and non-repost accounts in separate searches and respects the query length limit", async () => {
+  const names = Array.from(
+    { length: 40 },
+    (_, i) => `user_${String(i).padStart(10, "0")}`,
+  );
+  await withSocialData(
+    () => ({ tweets: [], next_cursor: null }),
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          ...names.map((username) => ({
+            username,
+            sinceId: "1",
+            checkedAt: checked,
+            includeReposts: false,
+          })),
+          {
+            username: "reposter",
+            sinceId: "1",
+            checkedAt: checked,
+            includeReposts: true,
+          },
+        ],
+        now,
+      );
+      const queries = calls.map((c) => c.url.searchParams.get("query")!);
+      assert.ok(queries.length >= 3);
+      assert.ok(queries.every((q) => q.length <= 500));
+      const reposts = queries.filter((q) => !q.includes("nativeretweets"));
+      assert.deepEqual(reposts, [
+        `(from:reposter) -filter:replies since_time:${Math.floor((Date.parse(checked) - 600000) / 1000)}`,
+      ]);
+      for (const name of names)
+        assert.equal(
+          queries.filter(
+            (q) => q.includes(`from:${name})`) || q.includes(`from:${name} `),
+          ).length,
+          1,
+        );
+      assert.equal(results.size, 41);
+    },
+  );
+});
+
+test("SocialData searches never-synced accounts alone and reports missing accounts", async () => {
+  await withSocialData(
+    (url) =>
+      url.pathname === "/twitter/user/ghost"
+        ? 404
+        : url.pathname === "/twitter/user/quiet"
+          ? { screen_name: "quiet", protected: false }
+          : { tweets: [], next_cursor: null },
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          { username: "ghost", includeReposts: false },
+          { username: "quiet", includeReposts: false },
+        ],
+        now,
+        7,
+      );
+      assert.equal(
+        calls[0].url.searchParams.get("query"),
+        `from:ghost -filter:replies -filter:nativeretweets since_time:${Math.floor((now - 7 * 86400000) / 1000)}`,
+      );
+      const ghost = results.get(xSourceKey("ghost", false));
+      assert.ok(ghost instanceof Error);
+      assert.match(ghost.message, /not found/);
+      const quiet = results.get(xSourceKey("quiet", false));
+      assert.ok(quiet && !(quiet instanceof Error));
+      assert.deepEqual(quiet.posts, []);
+    },
+  );
+});
+
+test("SocialData never searches further back than the retention window and reports an empty balance", async () => {
+  await withSocialData(
+    () => 402,
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          {
+            username: "old",
+            sinceId: "1",
+            checkedAt: "2026-01-01T00:00:00Z",
+            includeReposts: false,
+          },
+        ],
+        now,
+        7,
+      );
+      assert.match(
+        calls[0].url.searchParams.get("query")!,
+        new RegExp(`since_time:${Math.floor((now - 7 * 86400000) / 1000)}$`),
+      );
+      const result = results.get(xSourceKey("old", false));
+      assert.ok(result instanceof Error);
+      assert.match(result.message, /balance is empty/);
+    },
+  );
+});
+
+test("SocialData spaces requests so quiet checks stay within the free empty-response allowance", async () => {
+  await withSocialData(
+    () => ({ tweets: [], next_cursor: null }),
+    async () => {
+      const started = Date.now();
+      await syncXSources(
+        [
+          {
+            username: "a",
+            sinceId: "1",
+            checkedAt: checked,
+            includeReposts: false,
+          },
+          {
+            username: "b",
+            sinceId: "1",
+            checkedAt: checked,
+            includeReposts: true,
+          },
+        ],
+        now,
+      );
+      assert.ok(Date.now() - started >= 100);
+    },
+    "100",
+  );
 });
