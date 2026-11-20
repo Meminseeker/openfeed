@@ -3,6 +3,7 @@ import { hourlyRefresh } from "./refresh.ts";
 import { importLink, importPlaylist } from "./library.ts";
 import { initializeAccounts, installAuth, owner, asOwner } from "./auth.ts";
 import { syncTikTok, tiktokUsername } from "./tiktok.ts";
+import { syncLinkedIn, linkedinUsername } from "./linkedin.ts";
 import { expiredPost, retentionDays } from "./retention.ts";
 import { xVideoUrl, streamXVideo } from "./media.ts";
 import {
@@ -49,6 +50,7 @@ const usernames: Record<string, (input: string) => string> = {
   tiktok: tiktokUsername,
   instagram: instagramUsername,
   patreon: patreonUsername,
+  linkedin: linkedinUsername,
 };
 const platformLabels: Record<string, string> = {
   youtube: "YouTube",
@@ -56,6 +58,7 @@ const platformLabels: Record<string, string> = {
   instagram: "Instagram",
   tiktok: "TikTok",
   patreon: "Patreon",
+  linkedin: "LinkedIn",
 };
 // Compares stored usernames leniently: older Patreon entries were saved unvalidated.
 function sameUsername(platform: string, a: string, b: string) {
@@ -370,9 +373,13 @@ app.delete("/api/playlists/:id", (req, res) => {
 });
 app.post("/api/creators", async (req, res, next) => {
   try {
-    const platform = ["x", "instagram", "tiktok", "patreon"].includes(
-      req.body.platform,
-    )
+    const platform = [
+      "x",
+      "instagram",
+      "tiktok",
+      "patreon",
+      "linkedin",
+    ].includes(req.body.platform)
       ? req.body.platform
       : "youtube";
     const input = String(req.body.channel || "");
@@ -475,7 +482,9 @@ app.patch("/api/creators/:id", async (req, res) => {
     }
     for (const a of req.body.accounts.filter(
       (a: any) =>
-        ["x", "instagram", "tiktok", "patreon"].includes(a.platform) &&
+        ["x", "instagram", "tiktok", "patreon", "linkedin"].includes(
+          a.platform,
+        ) &&
         typeof a.username === "string" &&
         a.username.trim(),
     )) {
@@ -498,7 +507,9 @@ app.patch("/api/creators/:id", async (req, res) => {
     const other = req.body.accounts
       .filter(
         (a: any) =>
-          ["instagram", "x", "tiktok", "patreon"].includes(a.platform) &&
+          ["instagram", "x", "tiktok", "patreon", "linkedin"].includes(
+            a.platform,
+          ) &&
           typeof a.username === "string" &&
           a.username.trim(),
       )
@@ -735,7 +746,9 @@ async function syncContents() {
     };
     for (const c of creators()) {
       for (const account of c.accounts.filter((a) =>
-        ["youtube", "x", "instagram", "tiktok", "patreon"].includes(a.platform),
+        ["youtube", "x", "instagram", "tiktok", "patreon", "linkedin"].includes(
+          a.platform,
+        ),
       )) {
         if (!enabledTypes(account).length) continue;
         // Phone-synced Patreon accounts are uploaded by the shortcut instead.
@@ -758,28 +771,39 @@ async function syncContents() {
                   useSession: patreonSessionAllowed(),
                   since: Date.now() - retention * 86400000,
                 })
-              : account.platform === "tiktok"
-                ? await syncTikTok(account.username, c.id)
-                : account.platform === "x"
-                  ? xResults
-                    ? prefetchedX(account, c.id)
-                    : await syncX(
-                        account.username,
-                        c.id,
-                        account.xSinceId,
-                        enabledTypes(account).includes("repost"),
-                      )
-                  : account.platform === "instagram"
-                    ? await syncInstagram(
-                        account.username,
-                        c.id,
-                        enabledTypes(account),
-                      )
-                    : await syncChannel(
-                        account.channelId!,
-                        c.id,
-                        enabledTypes(account) as Kind[],
-                      );
+              : account.platform === "linkedin"
+                ? await syncLinkedIn(
+                    account.username,
+                    c.id,
+                    new Map(
+                      posts()
+                        .filter((p) => p.platform === "linkedin")
+                        .map((p) => [p.id, p]),
+                    ),
+                    Date.now() - retention * 86400000,
+                  )
+                : account.platform === "tiktok"
+                  ? await syncTikTok(account.username, c.id)
+                  : account.platform === "x"
+                    ? xResults
+                      ? prefetchedX(account, c.id)
+                      : await syncX(
+                          account.username,
+                          c.id,
+                          account.xSinceId,
+                          enabledTypes(account).includes("repost"),
+                        )
+                    : account.platform === "instagram"
+                      ? await syncInstagram(
+                          account.username,
+                          c.id,
+                          enabledTypes(account),
+                        )
+                      : await syncChannel(
+                          account.channelId!,
+                          c.id,
+                          enabledTypes(account) as Kind[],
+                        );
           if (account.platform === "youtube") {
             const existing = posts();
             const kept = new Set(
@@ -821,6 +845,14 @@ async function syncContents() {
           source.error = result.warning || undefined;
           if (!current.avatar && "avatar" in result)
             current.avatar = String(result.avatar || "");
+          // LinkedIn slugs are often unreadable; replace the default name once.
+          if (
+            "name" in result &&
+            typeof result.name === "string" &&
+            result.name &&
+            current.name === source.username
+          )
+            current.name = result.name.slice(0, 100);
           current.lastSync = source.lastSync;
           current.error = creatorError(current);
           saveCreator(current);

@@ -28,7 +28,7 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 ## What works
 
 - Follow a public YouTube channel or X account by @handle or profile URL (YouTube channel IDs also work).
-- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok supports public video import; Patreon syncs member posts with a configured session.
+- Rename creator profiles, assign multiple comma-separated topics, and link their YouTube, X and Instagram accounts. TikTok supports public video import; Patreon syncs member posts with a configured session; LinkedIn imports the few recent posts a public profile shows to logged-out visitors.
 - Mix videos, Shorts, and creator-authored community posts in one feed, including multi-image albums, alongside X text, photo, video and GIF posts.
 - Set content types to sync independently on each creator/source. Empty selection pauses that source. Existing posts and notes remain available. Other-platform preferences are stored until those integrations are implemented.
 - Open posts in a modal with video playback, image carousel, previous/next navigation, and separate copy/open-source actions.
@@ -128,6 +128,14 @@ Add TikTok directly or edit an existing creator's TikTok account using a usernam
 
 Embed video dates are estimated from their IDs because the embed omits publication timestamps. TikTok may return an access challenge, an empty profile payload, or require sign-in. These responses surface as source errors without removing previously imported content. This importer does not bypass challenges or guarantee a complete timeline. The player includes an Open source fallback; playback controls inside the TikTok iframe are managed by TikTok.
 
+### LinkedIn
+
+Add LinkedIn as a source, or add it to an existing creator under **Other accounts**, using the profile name or an HTTPS `linkedin.com/in/…` URL (country subdomains such as `tr.linkedin.com` are accepted). Only personal profiles are supported, not company pages. LinkedIn has no API for reading other members' posts, so OpenFeed reads two public, logged-out pages and nothing else: no sign-in, cookies or API key are used.
+
+- **Posts:** the profile page lists about 5 recent posts in its search-engine metadata (schema.org JSON-LD), with full text and exact publication times. It may not include every recent post, and reposts and comments never appear. Hourly refresh can miss posts if someone publishes more than about 5 between refreshes.
+- **Media:** for each new post, OpenFeed reads the post's public embed page (`/embed/feed/update/urn:li:activity:<id>`) once to get photos, article previews, and the MP4 video with its poster. These LinkedIn CDN links do not expire, so a post is not fetched again after its media is stored. If the embed fails, the post is kept without media and the next refresh tries again. Posts already older than the retention window are skipped, since they would be discarded anyway.
+- **Limits:** LinkedIn can refuse requests (HTTP 999), show a sign-in wall, or stop showing posts to logged-out visitors at any time, especially for cloud servers that send many requests. These responses appear as source errors and existing posts are kept. A missing profile also returns HTTP 999, so OpenFeed cannot tell it apart from a refusal. LinkedIn's User Agreement forbids automated access; this importer reads only public pages and does not bypass sign-in or bot checks.
+
 ### Patreon
 
 Add a Patreon creator directly, or add the creator's Patreon name or profile URL (`patreon.com/name` or `patreon.com/cw/name`) to an existing creator, then refresh. OpenFeed resolves the creator's campaign and imports posts from the last retention window (7 days by default) on each manual or hourly refresh. **Unread Patreon posts are kept until you read them**, so falling behind never loses posts; once read, they follow the normal retention rules (saved and noted posts are kept).
@@ -172,7 +180,7 @@ Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On
 
 **Playlists** imports public or unlisted YouTube playlists, including older videos. Select a playlist to view it in its original order; refresh it to discover changes. Both classic and modern YouTube cards and continuation pages are supported (up to 21 pages per import). Partial imports show a warning. Private, deleted or unplayable items cannot be imported. Removing a playlist preserves items also stored as links, saved for later, noted, or belonging to another playlist.
 
-**Links** imports individual YouTube, X, Instagram and TikTok content URLs without following their creators. TikTok short links are resolved only through TikTok-owned hosts. Imported links and playlist items never expire under feed retention, and do not appear in the recent feed unless a followed creator also supplies them. Saved and noted library items remain available in those sidebar sections. Platform access and embedding restrictions still apply; no login walls or private content are bypassed.
+**Links** imports individual YouTube, X, Instagram, TikTok and LinkedIn content URLs without following their creators. LinkedIn post links (`/posts/…-activity-<id>-…` or `/feed/update/urn:li:activity:<id>`) are read from the public embed page; their date comes from the post ID, which encodes the exact publication time. TikTok short links are resolved only through TikTok-owned hosts. Imported links and playlist items never expire under feed retention, and do not appear in the recent feed unless a followed creator also supplies them. Saved and noted library items remain available in those sidebar sections. Platform access and embedding restrictions still apply; no login walls or private content are bypassed.
 
 Usernames are case-insensitive, 3–40 letters/numbers/dots/dashes/underscores. Passwords are 12–128 characters. Signup is open after the existing workspace is claimed; password-reset email is not implemented. Browser note drafts are scoped by account. Log out on shared devices.
 

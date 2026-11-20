@@ -69,7 +69,7 @@ export function LibraryView({
       <p>
         {page === "playlists"
           ? "Add a YouTube playlist and watch it at your own pace."
-          : "Paste a YouTube, X, Instagram or TikTok content link."}{" "}
+          : "Paste a YouTube, X, Instagram, TikTok or LinkedIn content link."}{" "}
         Items here are kept regardless of age.
       </p>
       <form

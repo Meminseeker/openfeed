@@ -5,6 +5,7 @@ import { initialData, publicPosts } from "./youtube.ts";
 import { fetchXStatus } from "./x.ts";
 import { pagePost, instagramPosts } from "./instagram.ts";
 import { syncTikTok } from "./tiktok.ts";
+import { fetchLinkedInPost, linkedinPostRef } from "./linkedin.ts";
 import type { Post, Playlist } from "../src/types.ts";
 const text = (v: any): string =>
   v?.simpleText || v?.runs?.map((r: any) => r.text).join("") || "";
@@ -19,7 +20,7 @@ export function contentUrl(input: string) {
   const u = new URL(input.trim());
   if (u.protocol !== "https:" || u.port || u.username || u.password)
     throw new Error(
-      "Paste an HTTPS link from YouTube, X, Instagram or TikTok.",
+      "Paste an HTTPS link from YouTube, X, Instagram, TikTok or LinkedIn.",
     );
   const host = u.hostname.replace(/^www\./, "").replace(/^m\./, "");
   if (host === "youtube.com" || host === "youtu.be") {
@@ -77,8 +78,12 @@ export function contentUrl(input: string) {
         url: `https://www.tiktok.com/@${m[1]}/video/${m[2]}`,
       };
   }
+  if (host === "linkedin.com" || host.endsWith(".linkedin.com")) {
+    const ref = linkedinPostRef(u.href);
+    if (ref) return { platform: "linkedin" as const, id: ref.id, url: ref.url };
+  }
   throw new Error(
-    "Use a public YouTube video, X post, Instagram post/Reel, or TikTok video link.",
+    "Use a public YouTube video, X post, Instagram post/Reel, TikTok video, or LinkedIn post link.",
   );
 }
 export async function resolveSharedUrl(input: string) {
@@ -216,6 +221,8 @@ export async function importLink(
     if (!post) throw new Error("Instagram content unavailable.");
     return { name, post: { ...post, libraryOnly: true } };
   }
+  if (link.platform === "linkedin")
+    return fetchLinkedInPost(link.url, base.creatorId);
   let post: Post | undefined;
   try {
     post = (await syncTikTok(link.username!, base.creatorId)).posts.find(

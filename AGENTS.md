@@ -11,7 +11,7 @@ This section exists so a new session does not have to re-explore the repo. Line 
 
 ## What it is
 
-OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, Instagram and TikTok by scraping public pages, with optional official APIs for X and Instagram, and on Patreon through the web app's JSON API using the owner's session cookie. It also supports saved links and YouTube playlists, notes with timestamps, and read/saved state. Each account has its own isolated workspace.
+OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, Instagram and TikTok by scraping public pages, with optional official APIs for X and Instagram, on Patreon through the web app's JSON API using the owner's session cookie, and on LinkedIn by reading public, logged-out profile and post-embed pages. It also supports saved links and YouTube playlists, notes with timestamps, and read/saved state. Each account has its own isolated workspace.
 
 - **Stack:** React 19 + Vite 7 SPA (`src/`), an Express 5 server (`server/`), and SQLite through the built-in `node:sqlite` `DatabaseSync` (synchronous; no ORM). The only runtime dependencies are express, fast-xml-parser, lucide-react, react/react-dom and @fontsource fonts.
 - **Single port:** in dev, `server/index.ts` mounts Vite in middleware mode. In production it serves `dist/` with an SPA fallback (`app.get("/{*path}")`, Express 5 syntax).
@@ -23,7 +23,7 @@ OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, In
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run dev`                    | `tsx server/index.ts`. Serves the app on http://localhost:3000 (loopback). Vite HMR uses its own default WebSocket port, 24678, because no `hmr.server` is configured.                                                                                                                                                                                                |
 | `npm start`                      | `NODE_ENV=production tsx …`. This still runs under **tsx**, so it does not reproduce the Docker runtime. To check the real production runtime, run `npm run build && NODE_ENV=production node server/index.ts`, or the production-runtime test.                                                                                                                       |
-| `npm test`                       | `tsx --test tests/*.test.ts`. 94 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                     |
+| `npm test`                       | `tsx --test tests/*.test.ts`. 108 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                    |
 | `npx tsx --test tests/x.test.ts` | Runs a single file. Add `--test-name-pattern="regex"` to filter by test name.                                                                                                                                                                                                                                                                                         |
 | `npm run build`                  | `tsc --noEmit && vite build`. `tsc` type-checks `src`, `server`, `tests` and `vite.config.ts`.                                                                                                                                                                                                                                                                        |
 | `npm run format`                 | Prettier with default settings (no config file): double quotes, semicolons, 2 spaces, trailing commas, 80 columns. **This script reformats `tests/fixtures/x-long-*.html` (there is no `.prettierignore`), and tests depend on those files' exact bytes.** Restore them afterwards with `git checkout tests/fixtures`, or run Prettier only on the files you changed. |
@@ -59,6 +59,7 @@ server/
   instagram.ts     syncInstagram (public embed or Meta Business Discovery), instagramPosts
   tiktok.ts        syncTikTok (creator embed, then profile JSON fallback)
   patreon.ts       syncPatreon, resolvePatreonCampaign, patreonDoc (TipTap → RichBlock), fetchPatreonPost
+  linkedin.ts      syncLinkedIn (profile JSON-LD + post embeds), linkedinPostRef, fetchLinkedInPost (Links import)
 src/
   main.tsx         App: all state, sidebar, feed/creators/saved/noted pages, PostCard, CreatorModal (~1400 lines)
   ContentViewer.tsx Modal viewer: YouTube iframe API, native <video>, TikTok iframe, image carousel, shortcuts, swipe, fullscreen
@@ -89,6 +90,7 @@ tests/             node:test files + fixtures/
   - instagram: post, video, short (Reels are stored as `short`)
   - tiktok: video
   - patreon: post
+  - linkedin: post
 - `enabledTypes(account)` returns `account.syncTypes`. If that is unset, **X defaults to `["post"]`** and every other platform gets all of its types. An empty array pauses the source.
 - `Account` fields: `{platform, username, channelId?, syncTypes?, xSinceId?, lastSync?, error?}`.
 - `Creator` fields: `{id, name, tags[], accounts[], avatar, lastSync?, error?, libraryOnly?}`.
@@ -105,7 +107,7 @@ tests/             node:test files + fixtures/
   - Channel-sync posts have no `platform` field.
   - Link and playlist imports set `platform: "youtube"`.
   - Either way, the id is the bare 11-char video id, or the raw community post id.
-- Other platforms use `x:<id>`, `instagram:<shortcode>` and `tiktok:<numericId>`. A new adapter must never produce bare 11-char ids, because the viewer and `youtube-dates.ts` use that shape to detect YouTube.
+- Other platforms use `x:<id>`, `instagram:<shortcode>`, `tiktok:<numericId>`, `patreon:<postId>` and `linkedin:<activityId>`. A new adapter must never produce bare 11-char ids, because the viewer and `youtube-dates.ts` use that shape to detect YouTube.
 - Creator ids:
   - followed creators: a UUID
   - imported links: `library:<platform>:<user>`
@@ -207,6 +209,7 @@ All `/api/*` routes except `/api/auth/*` require a session. What a route returns
   - Instagram: `syncInstagram(username, creatorId, types)`.
   - TikTok: `syncTikTok(username, creatorId)`.
   - Patreon: `syncPatreon(username, campaignId, creatorId, {useSession, since})`. A missing `campaignId` is resolved and saved on the account.
+  - LinkedIn: `syncLinkedIn(username, creatorId, existingLinkedInPosts, retentionCutoffMs)`. The map lets it skip embed fetches for posts whose media is already stored. The cutoff skips them for posts that will be discarded as expired.
   - Accounts with no enabled types are skipped.
 - Adapters return `{posts, warning?, avatar?, newestId?}`.
   - `warning` is written to `account.error` and shown in the UI, even when the sync succeeded. X public mode always sets a coverage warning.
@@ -262,6 +265,7 @@ In `index.ts`:
     - X: `pbs.twimg.com` and `video.twimg.com`.
     - Instagram: `*.cdninstagram.com` and `*.fbcdn.net`.
     - TikTok video: `tiktokcdn.com`, `tiktokcdn-us.com` and `tiktok.com`.
+    - LinkedIn: `media.licdn.com` (images) and `dms.licdn.com` (MP4s) only; `static.licdn.com` UI icons are rejected.
   - TikTok covers and YouTube community images are checked only for https with no credentials.
 - **Fetching:**
   - **Sync adapters** use plain global `fetch` with timeouts and default redirect handling.
@@ -303,6 +307,16 @@ In `index.ts`:
     - The setup panel then shows `patreonCampaignLookupUrl` for the user's own browser. `PUT /api/patreon/campaign {username, campaignId}` stores the number; it rejects non-numeric ids and ids already used by another account.
     - Uploads also reject a page whose included campaign `vanity` differs from the account username, which catches a wrongly entered id.
     - The first upload sets `account.phoneSync`. After that, `syncContents` skips the account and the detail endpoint returns the stored post without fetching.
+- **LinkedIn** (`linkedin.ts`):
+  - There is no usable API: `r_member_social` is closed, and members can only read their own posts. Nothing logs in, and no cookie is ever sent.
+  - `linkedinUsername` accepts a slug or an `https://*.linkedin.com/in/<slug>` URL. It decodes percent-escapes (Unicode slugs exist), applies NFC and lowercases _before_ validating (`İ` lowercases to `i` plus a combining mark, which the regex allows), and rejects `/company/` pages. Stored names must re-validate, because every sync calls it again.
+  - The profile page `https://www.linkedin.com/in/<slug>/` holds one `application/ld+json` `@graph` with a `Person` and about 5 `DiscussionForumPosting` items (full `text`, exact `datePublished`, a `url` containing `activity-<id>`). Only posts whose `author.url` slug matches are kept. The post's author is a bare `Person` stub, so the profile photo comes from the `Person` node that has an `image`.
+  - Media is not in the JSON-LD. For each post not already stored with `images` defined and not older than the retention cutoff, sync reads `https://www.linkedin.com/embed/feed/update/urn:li:<type>:<id>` (at most 10 per sync): `feed-images-content` photos, `article-content` preview images, and the `<video data-sources>` JSON, from which it takes the highest-bitrate MP4 plus `data-poster-url`. The links carry `e=2147483647` (no expiry), so there is no detail-route refresh.
+  - `images` doubles as a marker: an embed that succeeds always sets it, `[]` when the post has no photos, or `[image]` when only the JSON-LD had an image, so the viewer matches the card. `undefined` means the embed failed, and the next sync retries.
+  - Links imports take the post id from the embed's `data-activity-urn`, so a `ugcPost`/`share` link merges with the synced `activity` copy of the same post.
+  - LinkedIn ids encode Unix ms as `BigInt(id) >> 22n` (`linkedinIdDate`). Links imports use it as the exact date; sync uses it only when `datePublished` is missing.
+  - An HTTP 999 means either a refusal or a missing profile; LinkedIn uses the same code for both. A redirect to `/authwall`, `/login` or `/checkpoint` is a sign-in wall. Both are thrown errors.
+  - Verified 2026-11-21 from the production droplet: the profile and embed pages returned 200 to a plain `Mozilla/5.0` user agent.
 - **TikTok:**
   - The creator embed gives up to 10 videos, with dates estimated as `BigInt(id) >> 32n` (marked approximate).
   - Profile JSON is the fallback.

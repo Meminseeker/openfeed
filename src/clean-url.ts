@@ -30,7 +30,9 @@ export function cleanPastedUrl(
         "m.tiktok.com",
         "vm.tiktok.com",
         "vt.tiktok.com",
-      ].includes(host);
+      ].includes(host) ||
+      host === "linkedin.com" ||
+      host.endsWith(".linkedin.com");
     if (!supported) return value;
     const key = youtube ? (kind === "playlist" ? "list" : "v") : undefined;
     const id = key ? url.searchParams.get(key) : null;

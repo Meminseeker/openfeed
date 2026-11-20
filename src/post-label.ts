@@ -10,6 +10,7 @@ export function postLabel(p: Post) {
         : "Instagram Post";
   if (platform === "tiktok") return "TikTok Video";
   if (platform === "patreon") return "Patreon Post";
+  if (platform === "linkedin") return "LinkedIn Post";
   return p.kind === "short"
     ? "YouTube Shorts"
     : p.kind === "community"

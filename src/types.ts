@@ -6,6 +6,7 @@ export const sourceTypes: Record<string, SyncType[]> = {
   instagram: ["post", "video", "short"],
   tiktok: ["video"],
   patreon: ["post"],
+  linkedin: ["post"],
 };
 export const syncLabels: Record<SyncType, string> = {
   video: "Videos",
@@ -64,7 +65,7 @@ export interface Post {
   image?: string;
   images?: string[];
   videoId?: string;
-  platform?: "youtube" | "x" | "instagram" | "tiktok" | "patreon";
+  platform?: "youtube" | "x" | "instagram" | "tiktok" | "patreon" | "linkedin";
   sourceUsername?: string;
   videos?: { url: string; poster?: string; loop?: boolean }[];
   repost?: boolean;

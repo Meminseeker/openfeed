@@ -455,7 +455,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                 <h2>
                   Your creators <span>{followed.length}</span>
                 </h2>
-                <span>YouTube, X, Instagram & TikTok</span>
+                <span>YouTube, X, Instagram, TikTok & more</span>
               </div>
               <div className="creator-grid">
                 {followed.map((c) => (
@@ -493,7 +493,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
               {!followed.length && !loading && (
                 <Empty
                   title="Start with someone you love following."
-                  text="Add a YouTube, X, Instagram or TikTok creator, give them a few topics, and make this space your own."
+                  text="Add a YouTube, X, Instagram, TikTok, Patreon or LinkedIn creator, give them a few topics, and make this space your own."
                   action={() => setModal(true)}
                 />
               )}
@@ -776,9 +776,9 @@ function App({ username, logout }: { username: string; logout: () => void }) {
               )}
               <div className="source-note">
                 Public content only. YouTube uploads and community posts, plus
-                available X, Instagram and TikTok posts. X public snapshots can
-                omit recent posts. ≈ Approximate date; undated posts appear
-                last. No ads or recommendations added by OpenFeed.
+                available X, Instagram, TikTok and LinkedIn posts. X public
+                snapshots can omit recent posts. ≈ Approximate date; undated
+                posts appear last. No ads or recommendations added by OpenFeed.
               </div>
             </>
           )}
@@ -988,7 +988,9 @@ function SyncChoices({
             ? "X"
             : account.platform === "patreon"
               ? "Patreon"
-              : account.platform}
+              : account.platform === "linkedin"
+                ? "LinkedIn"
+                : account.platform}
       </legend>
       {(sourceTypes[account.platform] || []).map((kind) => (
         <label key={kind}>
@@ -1132,7 +1134,8 @@ function CreatorModal({
                         e.target.value === "tiktok"
                           ? ["video"]
                           : e.target.value === "x" ||
-                              e.target.value === "patreon"
+                              e.target.value === "patreon" ||
+                              e.target.value === "linkedin"
                             ? ["post"]
                             : e.target.value === "instagram"
                               ? ["post", "video", "short"]
@@ -1146,6 +1149,7 @@ function CreatorModal({
                 <option value="instagram">Instagram</option>
                 <option value="tiktok">TikTok</option>
                 <option value="patreon">Patreon</option>
+                <option value="linkedin">LinkedIn</option>
               </select>
               {platform === "x"
                 ? "X account"
@@ -1155,7 +1159,9 @@ function CreatorModal({
                     ? "TikTok account"
                     : platform === "patreon"
                       ? "Patreon creator"
-                      : "YouTube channel"}
+                      : platform === "linkedin"
+                        ? "LinkedIn profile"
+                        : "YouTube channel"}
               <input
                 autoFocus
                 required
@@ -1168,7 +1174,9 @@ function CreatorModal({
                         ? "@username or a TikTok profile URL"
                         : platform === "patreon"
                           ? "Creator name or a Patreon profile URL"
-                          : "@mkbhd or a YouTube channel URL"
+                          : platform === "linkedin"
+                            ? "https://www.linkedin.com/in/name/"
+                            : "@mkbhd or a YouTube channel URL"
                 }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
@@ -1176,7 +1184,9 @@ function CreatorModal({
               <small>
                 {platform === "patreon"
                   ? "Member posts use the server's Patreon session; other accounts see public previews."
-                  : platform === "instagram" || platform === "tiktok"
+                  : platform === "instagram" ||
+                      platform === "tiktok" ||
+                      platform === "linkedin"
                     ? "Public accounts only. The platform may block access; see source details below."
                     : "Public channels only. No sign-in or API key needed."}
               </small>
@@ -1347,9 +1357,9 @@ function CreatorModal({
           </div>
           <details>
             <summary>
-              Other accounts <span>TikTok · Patreon</span>
+              Other accounts <span>TikTok · Patreon · LinkedIn</span>
             </summary>
-            {["tiktok", "patreon"].map((platform) => {
+            {["tiktok", "patreon", "linkedin"].map((platform) => {
               const account = accounts.find((a) => a.platform === platform) || {
                 platform,
                 username: "",
@@ -1362,8 +1372,8 @@ function CreatorModal({
               return (
                 <div className="planned-source" key={platform}>
                   <label>
-                    {platform === "x"
-                      ? "X (Twitter)"
+                    {platform === "linkedin"
+                      ? "LinkedIn"
                       : platform[0].toUpperCase() + platform.slice(1)}
                     <input
                       value={account.username}
@@ -1381,9 +1391,11 @@ function CreatorModal({
                         {account.error ||
                           (platform === "tiktok"
                             ? "Public videos sync on refresh. TikTok may restrict access."
-                            : account.phoneSync
-                              ? "Synced from your phone shortcut. Unread posts stay until you read them."
-                              : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
+                            : platform === "linkedin"
+                              ? "Public profile only, no sign-in. LinkedIn shows about 5 recent posts; reposts and comments are not included."
+                              : account.phoneSync
+                                ? "Synced from your phone shortcut. Unread posts stay until you read them."
+                                : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
                       </small>
                       {platform === "patreon" && creator && (
                         <PhoneSync username={account.username} />
