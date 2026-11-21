@@ -8,6 +8,7 @@ import { cleanPastedUrl } from "./clean-url";
 import { useState, useEffect, type ReactNode } from "react";
 import type { State, Post } from "./types";
 import { api } from "./api";
+import { useI18n } from "./LocaleProvider";
 export function LibraryView({
   page,
   state,
@@ -21,6 +22,7 @@ export function LibraryView({
   open: (p: Post, items: Post[]) => void;
   render: (p: Post, open: () => void) => ReactNode;
 }) {
+  const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null),
     [url, setUrl] = useState(""),
     [busy, setBusy] = useState(false),
@@ -65,12 +67,16 @@ export function LibraryView({
   }
   return (
     <section className="library">
-      <h2>{page === "playlists" ? "Your playlists" : "Your links"}</h2>
+      <h2>
+        {page === "playlists"
+          ? t("library.playlistsHeading")
+          : t("library.linksHeading")}
+      </h2>
       <p>
         {page === "playlists"
-          ? "Add a YouTube playlist and watch it at your own pace."
-          : "Paste a YouTube, X, Instagram, TikTok or LinkedIn content link."}{" "}
-        Items here are kept regardless of age.
+          ? t("library.playlistsIntro")
+          : t("library.linksIntro")}{" "}
+        {t("library.kept")}
       </p>
       <form
         className="library-add"
@@ -80,7 +86,11 @@ export function LibraryView({
         }}
       >
         <input
-          aria-label={page === "playlists" ? "Playlist link" : "Content link"}
+          aria-label={
+            page === "playlists"
+              ? t("library.playlistLink")
+              : t("library.contentLink")
+          }
           type="url"
           required
           value={url}
@@ -109,8 +119,10 @@ export function LibraryView({
         />
         <button className="primary" disabled={busy}>
           {busy
-            ? "Importing…"
-            : "Add " + (page === "playlists" ? "playlist" : "link")}
+            ? t("library.importing")
+            : page === "playlists"
+              ? t("library.addPlaylist")
+              : t("library.addLink")}
         </button>
       </form>
       {error && (
@@ -126,7 +138,8 @@ export function LibraryView({
               className={p.id === selected ? "selected" : ""}
               onClick={() => setSelected(p.id)}
             >
-              {p.title} <small>{p.postIds.length} videos</small>
+              {p.title}{" "}
+              <small>{t("library.videos", { count: p.postIds.length })}</small>
             </button>
           ))}
         </div>
@@ -135,7 +148,7 @@ export function LibraryView({
         <div className="section-top">
           <h3>{playlist.title}</h3>
           <button disabled={busy} onClick={() => void add(playlist.url)}>
-            Refresh playlist
+            {t("library.refreshPlaylist")}
           </button>
           <button
             disabled={busy}
@@ -153,7 +166,7 @@ export function LibraryView({
               }
             }}
           >
-            Remove playlist
+            {t("library.removePlaylist")}
           </button>
         </div>
       )}
@@ -169,8 +182,9 @@ export function LibraryView({
       />
       {items.some((p) => !(page === "links" ? p.linkedAt : p.published)) && (
         <p className="muted">
-          Items without a known {page === "links" ? "addition" : "publication"}{" "}
-          date appear last, in their original order.
+          {page === "links"
+            ? t("library.undatedLinks")
+            : t("library.undatedPlaylist")}
         </p>
       )}
       <div className="post-grid">
@@ -178,16 +192,16 @@ export function LibraryView({
       </div>
       {items.length > limit && (
         <button className="load-more" onClick={() => setLimit(limit + 24)}>
-          Show more · {items.length - limit} remaining
+          {t("library.showMore", { count: items.length - limit })}
         </button>
       )}
       {!items.length && (
         <div className="empty">
           {page === "playlists"
             ? playlist
-              ? "No videos match this filter."
-              : "Add or select a playlist to see its videos."
-            : "Links you add will appear here."}
+              ? t("library.noMatch")
+              : t("library.selectPlaylist")
+            : t("library.emptyLinks")}
         </div>
       )}
     </section>

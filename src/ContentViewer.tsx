@@ -26,6 +26,7 @@ import { viewerShortcut, seekPosition, timestamp } from "./viewer-shortcuts";
 import { Notes } from "./Notes";
 import { RichText } from "./RichText";
 import { LinkActions } from "./LinkActions";
+import { useI18n } from "./LocaleProvider";
 export function ContentViewer({
   post,
   creator,
@@ -47,6 +48,7 @@ export function ContentViewer({
   onSave: () => void;
   onRemove: () => void;
 }) {
+  const { t, locale } = useI18n();
   const dialog = useRef<HTMLElement>(null),
     host = useRef<HTMLDivElement>(null),
     native = useRef<HTMLVideoElement>(null),
@@ -142,10 +144,7 @@ export function ContentViewer({
         setPosition(value.currentTime);
         setDuration(value.duration);
       }
-      if (type === "onPlayerError")
-        setError(
-          "TikTok could not play this video. Try again or open the source.",
-        );
+      if (type === "onPlayerError") setError(t("viewer.tiktokError"));
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
@@ -201,6 +200,7 @@ export function ContentViewer({
             rel: 0,
             autoplay: 0,
             fs: 1,
+            hl: locale,
           },
           events: {
             onReady: (event: { target: YouTubePlayer }) => {
@@ -227,10 +227,10 @@ export function ContentViewer({
               if (!cancelled)
                 setError(
                   event.data === 101 || event.data === 150
-                    ? "This creator has disabled embedded playback. Use Open source to watch on YouTube."
+                    ? t("viewer.embedDisabled")
                     : event.data === 100
-                      ? "This video is unavailable or private."
-                      : `YouTube could not play this video (error ${event.data}). Try again or open the source.`,
+                      ? t("viewer.unavailable")
+                      : t("viewer.youtubeError", { code: event.data }),
                 );
             },
           },
@@ -309,7 +309,7 @@ export function ContentViewer({
       if (native.current.paused)
         void native.current
           .play()
-          .catch(() => setHint("Use the video play button to start playback."));
+          .catch(() => setHint(t("viewer.playButtonHint")));
       else native.current.pause();
       return;
     }
@@ -318,12 +318,12 @@ export function ContentViewer({
       if (p.getPlayerState() === 1) p.pauseVideo();
       else p.playVideo();
     }
-  }, [ready, isTikTok, playing, messageTikTok]);
+  }, [ready, isTikTok, playing, messageTikTok, t]);
   const toggleCaptions = useCallback(() => {
     if (native.current) {
       const tracks = Array.from(native.current.textTracks);
       if (!tracks.length) {
-        setHint("This video has no caption track available.");
+        setHint(t("viewer.noCaptions"));
         return;
       }
       tracks.forEach((t) => (t.mode = captions ? "disabled" : "showing"));
@@ -338,14 +338,12 @@ export function ContentViewer({
       if (captions) p.unloadModule("captions");
       else p.loadModule("captions");
       setCaptions(!captions);
-      setHint(
-        "Caption availability depends on the video. Use the player CC button if no captions appear.",
-      );
+      setHint(t("viewer.captionsHint"));
     } else {
       p.getIframe().focus();
-      setHint("The player is focused. Press C to toggle its captions.");
+      setHint(t("viewer.playerFocused"));
     }
-  }, [ready, captions]);
+  }, [ready, captions, t]);
   const slide = useCallback(
     (delta: number) => {
       setFailedImage(false);
@@ -464,28 +462,29 @@ export function ContentViewer({
               <small
                 title={
                   post.published
-                    ? new Date(post.published).toLocaleString()
+                    ? new Date(post.published).toLocaleString(locale)
                     : undefined
                 }
               >
-                {postLabel(post)} · {post.publishedApproximate ? "≈ " : ""}
-                {relativeTime(post.published)}
+                {postLabel(post, locale)} ·{" "}
+                {post.publishedApproximate ? "≈ " : ""}
+                {relativeTime(post.published, Date.now(), locale)}
               </small>
             </div>
           </div>
           <div className="viewer-header-actions">
             <LinkActions key={post.id} url={post.url} />
             <button
-              aria-label={post.saved ? "Remove from saved" : "Save for later"}
+              aria-label={post.saved ? t("post.unsave") : t("post.save")}
               aria-pressed={post.saved}
               onClick={onSave}
             >
               <Bookmark size={18} fill={post.saved ? "currentColor" : "none"} />
             </button>
-            <button aria-label="Remove content" onClick={onRemove}>
+            <button aria-label={t("post.remove")} onClick={onRemove}>
               <Trash2 size={18} />
             </button>
-            <button aria-label="Close viewer" onClick={close}>
+            <button aria-label={t("viewer.close")} onClick={close}>
               <X size={22} />
             </button>
           </div>
@@ -505,8 +504,8 @@ export function ContentViewer({
                     className="media-fullscreen"
                     aria-label={
                       expanded === "video"
-                        ? "Exit fullscreen"
-                        : "Fullscreen video"
+                        ? t("viewer.exitFullscreen")
+                        : t("viewer.fullscreenVideo")
                     }
                     onClick={() => void fullscreen("video")}
                   >
@@ -552,13 +551,8 @@ export function ContentViewer({
                         if (post.platform === "tiktok") {
                           setEmbedFallback(true);
                           setReady(false);
-                          setHint(
-                            "Using TikTok’s embedded player. Speed controls are unavailable in this player.",
-                          );
-                        } else
-                          setError(
-                            "This video couldn't load. Try again or open the source.",
-                          );
+                          setHint(t("viewer.tiktokFallback"));
+                        } else setError(t("viewer.videoError"));
                       }}
                     />
                   ) : (
@@ -566,7 +560,7 @@ export function ContentViewer({
                   )}
                   {(post.videos?.length || 0) > 1 && (
                     <select
-                      aria-label="Select video"
+                      aria-label={t("viewer.selectVideo")}
                       value={videoIndex}
                       onChange={(e) => {
                         setVideoIndex(Number(e.target.value));
@@ -577,13 +571,15 @@ export function ContentViewer({
                     >
                       {post.videos!.map((v, i) => (
                         <option key={v.url} value={i}>
-                          Video {i + 1}
+                          {t("viewer.videoN", { n: i + 1 })}
                         </option>
                       ))}
                     </select>
                   )}
                   {!ready && !error && (
-                    <span className="player-loading">Loading video…</span>
+                    <span className="player-loading">
+                      {t("viewer.loadingVideo")}
+                    </span>
                   )}
                 </div>
                 {error ? (
@@ -596,17 +592,20 @@ export function ContentViewer({
                         setRetry((n) => n + 1);
                       }}
                     >
-                      Retry player
+                      {t("viewer.retryPlayer")}
                     </button>
                   </div>
                 ) : (
                   <div className="video-controls">
-                    <span className="video-time" aria-label="Playback position">
+                    <span
+                      className="video-time"
+                      aria-label={t("viewer.position")}
+                    >
                       {timestamp(position)} / {timestamp(duration)}
                     </span>
                     <button
                       disabled={!ready}
-                      aria-label="Rewind 5 seconds"
+                      aria-label={t("viewer.rewind")}
                       onClick={() => skip(-5)}
                     >
                       <RotateCcw size={17} />
@@ -614,15 +613,19 @@ export function ContentViewer({
                     </button>
                     <button
                       disabled={!ready}
-                      aria-label={playing ? "Pause video" : "Play video"}
+                      aria-label={
+                        playing ? t("viewer.pauseVideo") : t("viewer.playVideo")
+                      }
                       onClick={togglePlay}
                     >
                       {playing ? <Pause size={17} /> : <Play size={17} />}
-                      <span>{playing ? "Pause" : "Play"}</span>
+                      <span>
+                        {playing ? t("viewer.pause") : t("viewer.play")}
+                      </span>
                     </button>
                     <button
                       disabled={!ready}
-                      aria-label="Forward 5 seconds"
+                      aria-label={t("viewer.forward")}
                       onClick={() => skip(5)}
                     >
                       <RotateCw size={17} />
@@ -630,18 +633,18 @@ export function ContentViewer({
                     </button>
                     <button
                       disabled={!ready}
-                      aria-label="Toggle captions"
+                      aria-label={t("viewer.toggleCaptions")}
                       hidden={isTikTok}
                       onClick={toggleCaptions}
                     >
                       <Captions size={18} />
-                      <span>Captions</span>
+                      <span>{t("viewer.captions")}</span>
                     </button>
                     {!isTikTok && (
                       <div
                         className="speed-controls"
                         role="group"
-                        aria-label="Playback speed"
+                        aria-label={t("viewer.speed")}
                       >
                         {rates.map((rate) => (
                           <button
@@ -655,11 +658,7 @@ export function ContentViewer({
                         ))}
                       </div>
                     )}
-                    {isTikTok && (
-                      <small>
-                        Speed is unavailable in TikTok’s embedded player.
-                      </small>
-                    )}
+                    {isTikTok && <small>{t("viewer.tiktokSpeed")}</small>}
                   </div>
                 )}
                 {hint && (
@@ -697,8 +696,8 @@ export function ContentViewer({
                     className="media-fullscreen"
                     aria-label={
                       expanded === "image"
-                        ? "Exit fullscreen"
-                        : "Fullscreen image"
+                        ? t("viewer.exitFullscreen")
+                        : t("viewer.fullscreenImage")
                     }
                     onClick={() => void fullscreen("image")}
                   >
@@ -707,16 +706,20 @@ export function ContentViewer({
                   {failedImage ? (
                     <div className="image-error">
                       <ImageIcon size={28} />
-                      <p>This image couldn't load.</p>
+                      <p>{t("viewer.imageError")}</p>
                       <button onClick={() => setFailedImage(false)}>
-                        Retry image
+                        {t("viewer.retryImage")}
                       </button>
                     </div>
                   ) : (
                     <img
                       key={images[imageIndex]}
                       src={images[imageIndex]}
-                      alt={`${creator.name}'s post, image ${imageIndex + 1} of ${images.length}`}
+                      alt={t("viewer.imageAlt", {
+                        name: creator.name,
+                        n: imageIndex + 1,
+                        total: images.length,
+                      })}
                       referrerPolicy="no-referrer"
                       onError={() => setFailedImage(true)}
                     />
@@ -728,7 +731,7 @@ export function ContentViewer({
                     <>
                       <button
                         className="image-prev"
-                        aria-label="Previous image"
+                        aria-label={t("viewer.previousImage")}
                         disabled={imageIndex === 0}
                         onClick={() => slide(-1)}
                       >
@@ -736,7 +739,7 @@ export function ContentViewer({
                       </button>
                       <button
                         className="image-next"
-                        aria-label="Next image"
+                        aria-label={t("viewer.nextImage")}
                         disabled={imageIndex === images.length - 1}
                         onClick={() => slide(1)}
                       >
@@ -750,7 +753,7 @@ export function ContentViewer({
                     {images.map((src, i) => (
                       <button
                         key={src}
-                        aria-label={`Show image ${i + 1}`}
+                        aria-label={t("viewer.showImage", { n: i + 1 })}
                         aria-pressed={i === imageIndex}
                         onClick={() => {
                           setImageIndex(i);
@@ -772,10 +775,7 @@ export function ContentViewer({
             {post.platform === "instagram" &&
               ["video", "short"].includes(post.kind) &&
               !post.videos?.length && (
-                <p className="player-hint">
-                  Instagram did not expose a playable video for this post. Use
-                  Open source to watch it.
-                </p>
+                <p className="player-hint">{t("viewer.instagramNoVideo")}</p>
               )}
             <button
               className="mobile-notes-toggle"
@@ -783,23 +783,24 @@ export function ContentViewer({
               aria-controls="viewer-notes"
               onClick={() => setNotesOpen((open) => !open)}
             >
-              <NotebookPen size={18} /> {notesOpen ? "Hide notes" : "Notes"}
+              <NotebookPen size={18} />{" "}
+              {notesOpen ? t("viewer.hideNotes") : t("viewer.notes")}
               {post.notes?.trim() ? " •" : ""}
             </button>
             {post.textTruncated && (
               <p className="player-hint">
-                X returned a shortened preview.{" "}
+                {t("viewer.xTruncated")}{" "}
                 <a href={post.url} target="_blank" rel="noreferrer">
-                  Read the full post on X
+                  {t("viewer.xReadFull")}
                 </a>
                 .
               </p>
             )}
             {post.locked && (
               <p className="player-hint">
-                This post is locked for this account.{" "}
+                {t("viewer.locked")}{" "}
                 <a href={post.url} target="_blank" rel="noreferrer">
-                  Open it on Patreon
+                  {t("viewer.openPatreon")}
                 </a>
                 .
               </p>
@@ -833,59 +834,53 @@ export function ContentViewer({
           </div>
         </div>
         <footer className="viewer-footer">
-          <span className="swipe-hint">
-            Swipe left / right here to change content
-          </span>
+          <span className="swipe-hint">{t("viewer.swipe")}</span>
           <div className="content-navigation">
             <button
-              aria-label="Previous content"
+              aria-label={t("viewer.previousContent")}
               disabled={index === 0}
               onClick={() => navigate(-1)}
             >
               <ArrowUp size={15} />
-              Previous
+              {t("viewer.previous")}
             </button>
-            <span>
-              {index + 1} of {total}
-            </span>
+            <span>{t("viewer.count", { n: index + 1, total })}</span>
             <button
-              aria-label="Next content"
+              aria-label={t("viewer.nextContent")}
               disabled={index === total - 1}
               onClick={() => navigate(1)}
             >
-              Next
+              {t("viewer.next")}
               <ArrowDown size={15} />
             </button>
           </div>
           <div className="shortcut-help">
             <span>
               <kbd>↑</kbd>
-              <kbd>↓</kbd> content
+              <kbd>↓</kbd> {t("viewer.keyContent")}
             </span>
             <span>
               <kbd>←</kbd>
-              <kbd>→</kbd> {isVideo ? "seek 5s" : "images"}
+              <kbd>→</kbd>{" "}
+              {isVideo ? t("viewer.keySeek") : t("viewer.keyImages")}
             </span>
             {isVideo && (
               <>
                 <span>
-                  <kbd>Space</kbd> play
+                  <kbd>{t("viewer.keySpace")}</kbd> {t("viewer.keyPlay")}
                 </span>
                 <span>
-                  <kbd>C</kbd> captions
+                  <kbd>C</kbd> {t("viewer.keyCaptions")}
                 </span>
               </>
             )}
             <span>
-              <kbd>Esc</kbd> close
+              <kbd>Esc</kbd> {t("viewer.keyClose")}
             </span>
           </div>
         </footer>
         {!!videoId && (
-          <div className="iframe-help">
-            Click the title to use feed shortcuts. Inside the player, YouTube
-            handles its own keys. Shortcuts pause while you type notes.
-          </div>
+          <div className="iframe-help">{t("viewer.iframeHelp")}</div>
         )}
       </section>
     </div>

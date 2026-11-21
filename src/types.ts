@@ -8,13 +8,6 @@ export const sourceTypes: Record<string, SyncType[]> = {
   patreon: ["post"],
   linkedin: ["post"],
 };
-export const syncLabels: Record<SyncType, string> = {
-  video: "Videos",
-  short: "Shorts",
-  community: "Community posts",
-  post: "Posts",
-  repost: "Reposts",
-};
 export function enabledTypes(account: Account): SyncType[] {
   return (
     account.syncTypes ??

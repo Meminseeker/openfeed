@@ -43,8 +43,9 @@ import {
   Lock,
 } from "lucide-react";
 import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
-import { enabledTypes, sourceTypes, syncLabels } from "./types";
+import { enabledTypes, sourceTypes } from "./types";
 import { api } from "./api";
+import { useI18n, LanguageSelect, I18nProvider } from "./LocaleProvider";
 import { PhoneSync } from "./PhoneSync";
 import { ContentViewer } from "./ContentViewer";
 import { LinkActions } from "./LinkActions";
@@ -54,14 +55,16 @@ import "@fontsource/dm-sans/600.css";
 import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
+type PageName = "feed" | "creators" | "saved" | "noted" | "playlists" | "links";
 function App({ username, logout }: { username: string; logout: () => void }) {
+  const { t, locale } = useI18n();
   const [, tick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => tick((n) => n + 1), 60000);
     return () => clearInterval(timer);
   }, []);
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
-    [page, setPage] = useState("feed"),
+    [page, setPage] = useState<PageName>("feed"),
     [tag, setTag] = useState("All topics"),
     [query, setQuery] = useState(""),
     [types, setTypes] = useState<string[]>([]),
@@ -236,7 +239,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
     const p = state.posts.find((p) => p.id === viewerIds[index]);
     if (p && !p.read) void mutate(p, "read");
   };
-  const navigate = (p: string) => {
+  const navigate = (p: PageName) => {
     setPage(p);
     setMobile(false);
     setQuery("");
@@ -260,23 +263,25 @@ function App({ username, logout }: { username: string; logout: () => void }) {
           </span>
           OpenFeed<span className="brand-dot">.</span>
         </a>
-        <div className="workspace">PERSONAL WORKSPACE</div>
+        <div className="workspace">{t("sidebar.workspace")}</div>
         <nav>
-          {[
-            ["feed", Rss, "Your feed"],
-            ["creators", Users, "Creators"],
-            ["saved", Bookmark, "Saved for later"],
-            ["noted", NotebookPen, "Noted down"],
-            ["playlists", Play, "Playlists"],
-            ["links", ArrowUpRight, "Links"],
-          ].map(([id, Icon, label]) => (
+          {(
+            [
+              ["feed", Rss],
+              ["creators", Users],
+              ["saved", Bookmark],
+              ["noted", NotebookPen],
+              ["playlists", Play],
+              ["links", ArrowUpRight],
+            ] as const
+          ).map(([id, Icon]) => (
             <button
-              key={id as string}
+              key={id}
               className={page === id ? "nav active" : "nav"}
-              onClick={() => navigate(id as string)}
+              onClick={() => navigate(id)}
             >
               <Icon size={19} />
-              {label as string}
+              {t(`nav.${id}`)}
               {id === "feed" && (
                 <span className="count">
                   {state.posts.filter((p) => !p.libraryOnly && !p.read).length}
@@ -286,11 +291,12 @@ function App({ username, logout }: { username: string; logout: () => void }) {
           ))}
         </nav>
         <InstallApp />
+        <LanguageSelect className="sidebar-language" />
         <button className="nav" onClick={logout}>
-          Log out · {username}
+          {t("sidebar.logout", { username })}
         </button>
         <div className="topic-heading">
-          YOUR TOPICS <span>{tags.length}</span>
+          {t("sidebar.topics")} <span>{tags.length}</span>
         </div>
         <button
           className={`topic ${tag === "All topics" ? "selected" : ""}`}
@@ -300,7 +306,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
           }}
         >
           <span className="topic-dot all" />
-          All topics
+          {t("topics.all")}
         </button>
         {tags.map((t, i) => (
           <button
@@ -317,23 +323,23 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         ))}
         <button className="manage-topics" onClick={() => navigate("creators")}>
           <Plus size={15} />
-          Manage topics
+          {t("sidebar.manageTopics")}
         </button>
         <div className="sidebar-bottom">
           <div className="quiet-card">
             <Leaf size={21} />
-            <strong>A little less noise.</strong>
+            <strong>{t("sidebar.quietTitle")}</strong>
             <p>
-              Only the people you choose.
+              {t("sidebar.quietLine1")}
               <br />
-              At your own pace.
+              {t("sidebar.quietLine2")}
             </p>
           </div>
           <div className="profile">
             <span>{username.slice(0, 1).toUpperCase()}</span>
             <div>
               {username}
-              <small>Your personal workspace</small>
+              <small>{t("sidebar.profileCaption")}</small>
             </div>
             <span className="online" />
           </div>
@@ -343,31 +349,19 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         <header>
           <button
             className="menu"
-            aria-label="Toggle navigation"
+            aria-label={t("header.toggleNav")}
             onClick={() => setMobile(!mobile)}
           >
             <Menu />
           </button>
           <div className="breadcrumb">
-            My workspace <ChevronRight size={14} />
-            <strong>
-              {page === "creators"
-                ? "Creators"
-                : page === "saved"
-                  ? "Saved for later"
-                  : page === "noted"
-                    ? "Noted down"
-                    : page === "playlists"
-                      ? "Playlists"
-                      : page === "links"
-                        ? "Links"
-                        : "Your feed"}
-            </strong>
+            {t("header.workspace")} <ChevronRight size={14} />
+            <strong>{t(`nav.${page}`)}</strong>
           </div>
           <div className="header-right">
             <span className="local-badge">
               <span />
-              Personal space
+              {t("header.personalSpace")}
             </span>
             <button className="avatar" onClick={() => navigate("creators")}>
               {username.slice(0, 1).toUpperCase()}
@@ -377,35 +371,13 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         <div className="content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow">YOUR ATTENTION, YOUR CHOICE</div>
+              <div className="eyebrow">{t("page.eyebrow")}</div>
               <h1>
-                {page === "creators"
-                  ? "Good people. One place."
-                  : page === "saved"
-                    ? "For a quieter moment."
-                    : page === "noted"
-                      ? "Noted down."
-                      : page === "playlists"
-                        ? "One collection at a time."
-                        : page === "links"
-                          ? "A place for the links you find."
-                          : tag === "All topics"
-                            ? "A feed that feels like yours."
-                            : `${tag}, on your terms.`}
+                {page === "feed" && tag !== "All topics"
+                  ? t("page.feed.topicTitle", { topic: tag })
+                  : t(`page.${page}.title`)}
               </h1>
-              <p>
-                {page === "creators"
-                  ? "Connect the accounts. Follow the person."
-                  : page === "saved"
-                    ? "The things you wanted to come back to."
-                    : page === "noted"
-                      ? "The content you have written notes on."
-                      : page === "playlists"
-                        ? "Your collections, ready when you are."
-                        : page === "links"
-                          ? "Keep what catches your attention."
-                          : "Stay in the loop with the people you follow. Leave the noise behind."}
-              </p>
+              <p>{t(`page.${page}.subtitle`)}</p>
             </div>
             {!["links", "playlists"].includes(page) && (
               <button
@@ -416,14 +388,17 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                 }}
               >
                 <Plus size={17} />
-                Add creator
+                {t("action.addCreator")}
               </button>
             )}
           </div>
           {error && (
             <div className="error" role="alert">
               {error}
-              <button onClick={() => setError("")} aria-label="Dismiss error">
+              <button
+                onClick={() => setError("")}
+                aria-label={t("action.dismissError")}
+              >
                 <X size={16} />
               </button>
             </div>
@@ -453,9 +428,9 @@ function App({ username, logout }: { username: string; logout: () => void }) {
             <>
               <div className="section-top">
                 <h2>
-                  Your creators <span>{followed.length}</span>
+                  {t("creators.heading")} <span>{followed.length}</span>
                 </h2>
-                <span>YouTube, X, Instagram, TikTok & more</span>
+                <span>{t("creators.platforms")}</span>
               </div>
               <div className="creator-grid">
                 {followed.map((c) => (
@@ -470,8 +445,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                     <Avatar c={c} />
                     <h3>{c.name}</h3>
                     <p>
-                      {c.accounts.length} connected account
-                      {c.accounts.length !== 1 ? "s" : ""}
+                      {t("creators.accounts", { count: c.accounts.length })}
                     </p>
                     <div className="tags">
                       {c.tags.map((t) => (
@@ -481,19 +455,21 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                     <small>
                       {c.error ||
                         (c.lastSync
-                          ? `Updated ${new Date(c.lastSync).toLocaleString()}`
-                          : "Ready to sync")}
+                          ? t("creators.updated", {
+                              date: new Date(c.lastSync).toLocaleString(locale),
+                            })
+                          : t("creators.ready"))}
                     </small>
                     <span className="edit-link">
-                      Manage creator <ArrowUpRight size={14} />
+                      {t("creators.manage")} <ArrowUpRight size={14} />
                     </span>
                   </button>
                 ))}
               </div>
               {!followed.length && !loading && (
                 <Empty
-                  title="Start with someone you love following."
-                  text="Add a YouTube, X, Instagram, TikTok, Patreon or LinkedIn creator, give them a few topics, and make this space your own."
+                  title={t("creators.emptyTitle")}
+                  text={t("creators.emptyText")}
                   action={() => setModal(true)}
                 />
               )}
@@ -514,7 +490,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                     onClick={() => setFilters(!filters)}
                   >
                     <SlidersHorizontal size={16} />
-                    Filters
+                    {t("feed.filters")}
                     {(types.length > 0 || creatorFilter !== null) && (
                       <span className="filter-dot" />
                     )}
@@ -524,24 +500,25 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                     onClick={() => void refresh()}
                   >
                     <RefreshCw size={16} className={busy ? "spin" : ""} />
-                    {busy ? "Refreshing…" : "Refresh"}
+                    {busy ? t("feed.refreshing") : t("feed.refresh")}
                   </button>
                 </div>
               </div>
               <div className="topic-chips">
-                {["All topics", ...tags].map((t) => (
+                {["All topics", ...tags].map((topic) => (
                   <button
-                    key={t}
-                    onClick={() => setTag(t)}
-                    className={tag === t ? "active" : ""}
+                    key={topic}
+                    onClick={() => setTag(topic)}
+                    className={tag === topic ? "active" : ""}
                   >
-                    {t} <span className="unread-count">{unreadInTopic(t)}</span>
+                    {topic === "All topics" ? t("topics.all") : topic}{" "}
+                    <span className="unread-count">{unreadInTopic(topic)}</span>
                   </button>
                 ))}
                 <label className="search">
                   <Search size={16} />
                   <input
-                    placeholder="Search your feed"
+                    placeholder={t("feed.search")}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -550,7 +527,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
               <div
                 className="time-filters"
                 role="group"
-                aria-label="Publication time"
+                aria-label={t("feed.publicationTime")}
               >
                 {timeRanges.map((range) => (
                   <button
@@ -558,20 +535,20 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                     aria-pressed={timeRange === range}
                     title={
                       range === "1w+"
-                        ? "Older than one week"
+                        ? t("time.olderThanWeek")
                         : range === "All"
-                          ? "Any time"
-                          : `Within the last ${range}`
+                          ? t("time.anyTime")
+                          : t("time.within", { range: t(`time.${range}`) })
                     }
                     onClick={() => setTimeRange(range)}
                   >
-                    {range}
+                    {t(`time.${range}`)}
                   </button>
                 ))}
               </div>
               {removedPost && (
                 <div className="removed-notice" role="status">
-                  Content removed.{" "}
+                  {t("feed.removed")}{" "}
                   <button
                     onClick={async () => {
                       try {
@@ -587,15 +564,15 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       }
                     }}
                   >
-                    Undo
+                    {t("feed.undo")}
                   </button>
                 </div>
               )}
               {filters && (
                 <div className="filters">
                   <div>
-                    <span>Content type</span>
-                    {contentFilters.map(([k, v]) => (
+                    <span>{t("filters.contentType")}</span>
+                    {contentFilters.map((k) => (
                       <button
                         key={k}
                         aria-pressed={types.includes(k)}
@@ -608,7 +585,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                           )
                         }
                       >
-                        {v}{" "}
+                        {t(`filter.${k}`)}{" "}
                         <span className="count">
                           {
                             state.posts.filter(
@@ -629,7 +606,10 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                   </div>
                   <fieldset className="creator-filters">
                     <legend>
-                      Creators {tag !== "All topics" && <small>in {tag}</small>}
+                      {t("filters.creators")}{" "}
+                      {tag !== "All topics" && (
+                        <small>{t("filters.inTopic", { topic: tag })}</small>
+                      )}
                     </legend>
                     <button
                       type="button"
@@ -643,10 +623,10 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       }
                       onClick={() => setCreatorFilter(null)}
                     >
-                      All creators in this topic
+                      {t("filters.allCreators")}
                     </button>
                     <button type="button" onClick={() => setCreatorFilter([])}>
-                      Unselect all creators
+                      {t("filters.noCreators")}
                     </button>
                     <div className="creator-options">
                       {eligibleCreators.map((c) => (
@@ -666,10 +646,10 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                         </label>
                       ))}
                       {!eligibleCreators.length && (
-                        <small>No creators in this topic.</small>
+                        <small>{t("filters.noCreatorsInTopic")}</small>
                       )}
                     </div>
-                    <small>Uncheck any creators you want to exclude.</small>
+                    <small>{t("filters.uncheckHint")}</small>
                   </fieldset>
                   <button
                     onClick={() => {
@@ -681,14 +661,15 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       setReadStatus("all");
                     }}
                   >
-                    Reset filters
+                    {t("filters.reset")}
                   </button>
                 </div>
               )}
               <div className="feed-info">
                 <span>
                   <span className="live-dot" />
-                  Your sources <span className="muted">· Chronological</span>
+                  {t("feed.sources")}{" "}
+                  <span className="muted">{t("feed.chronological")}</span>
                 </span>
                 <button
                   disabled={!visible.some((p) => !p.read)}
@@ -704,30 +685,28 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                   }}
                 >
                   <Check size={14} />
-                  Mark these as read
+                  {t("feed.markRead")}
                 </button>
               </div>
               {state.creators.some((c) => c.error) && (
                 <div className="warning">
-                  Some sources need attention.{" "}
+                  {t("feed.attention")}{" "}
                   <button onClick={() => navigate("creators")}>
-                    View creator sync details <ArrowUpRight size={13} />
+                    {t("feed.syncDetails")} <ArrowUpRight size={13} />
                   </button>
                 </div>
               )}
               {loading ? (
-                <div className="empty">Loading your workspace…</div>
+                <div className="empty">{t("feed.loading")}</div>
               ) : !visible.length ? (
                 <Empty
                   title={
                     followed.length
-                      ? "Nothing here just yet."
-                      : "Your feed starts with a person."
+                      ? t("feed.emptyTitle")
+                      : t("feed.startTitle")
                   }
                   text={
-                    followed.length
-                      ? "Refresh to fetch public posts, or adjust your filters."
-                      : "Add your first creator. No recommendations, no endless scroll—just the people you choose."
+                    followed.length ? t("feed.emptyText") : t("feed.startText")
                   }
                   action={
                     followed.length
@@ -735,7 +714,9 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       : () => setModal(true)
                   }
                   actionLabel={
-                    followed.length ? "Refresh feed" : "Add your first creator"
+                    followed.length
+                      ? t("feed.emptyAction")
+                      : t("feed.startAction")
                   }
                 />
               ) : (
@@ -757,8 +738,10 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                   className="load-more"
                   onClick={() => setLimit(limit + 24)}
                 >
-                  Show 24 more posts{" "}
-                  <span>{visible.length - limit} remaining</span>
+                  {t("feed.showMore")}{" "}
+                  <span>
+                    {t("feed.remaining", { count: visible.length - limit })}
+                  </span>
                 </button>
               )}
               {!!visible.length && visible.length <= limit && (
@@ -768,18 +751,13 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                   </div>
                   <h3>
                     {visible.some((p) => !p.read)
-                      ? "You've reached the end."
-                      : "You're all caught up."}
+                      ? t("feed.end")
+                      : t("feed.caughtUp")}
                   </h3>
-                  <p>Go make something. Your feed will be here.</p>
+                  <p>{t("feed.goMake")}</p>
                 </div>
               )}
-              <div className="source-note">
-                Public content only. YouTube uploads and community posts, plus
-                available X, Instagram, TikTok and LinkedIn posts. X public
-                snapshots can omit recent posts. ≈ Approximate date; undated
-                posts appear last. No ads or recommendations added by OpenFeed.
-              </div>
+              <div className="source-note">{t("feed.sourceNote")}</div>
             </>
           )}
         </div>
@@ -832,13 +810,14 @@ function Empty({
   title,
   text,
   action,
-  actionLabel = "Add creator",
+  actionLabel,
 }: {
   title: string;
   text: string;
   action: () => void;
   actionLabel?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div className="empty">
       <span className="empty-icon">
@@ -848,19 +827,20 @@ function Empty({
       <p>{text}</p>
       <button className="primary" onClick={action}>
         <Plus size={16} />
-        {actionLabel}
+        {actionLabel ?? t("action.addCreator")}
       </button>
       <div className="empty-promises">
         <span>
           <Check size={14} />
-          People you approve
-        </span>
-        <span>
-          <Check size={14} />A finite feed
+          {t("empty.promiseApproved")}
         </span>
         <span>
           <Check size={14} />
-          Your own topics
+          {t("empty.promiseFinite")}
+        </span>
+        <span>
+          <Check size={14} />
+          {t("empty.promiseTopics")}
         </span>
       </div>
     </div>
@@ -879,6 +859,7 @@ function PostCard({
   c: Creator;
   mutate: (p: Post, f: "read" | "saved") => Promise<void>;
 }) {
+  const { t, locale } = useI18n();
   return (
     <article className={`post-card ${p.read ? "read" : ""}`}>
       <div className="post-author">
@@ -889,21 +870,21 @@ function PostCard({
             title={
               p.publishedApproximate
                 ? p.platform === "tiktok"
-                  ? "Approximate date from the TikTok video ID"
-                  : "Approximate date from YouTube’s relative timestamp"
+                  ? t("post.dateTikTok")
+                  : t("post.dateYouTube")
                 : p.published
-                  ? new Date(p.published).toLocaleString()
+                  ? new Date(p.published).toLocaleString(locale)
                   : undefined
             }
           >
             {p.publishedApproximate && p.published ? "≈ " : ""}
-            {relativeTime(p.published)}{" "}
-            <span className="post-type">· {postLabel(p)}</span>
+            {relativeTime(p.published, Date.now(), locale)}{" "}
+            <span className="post-type">· {postLabel(p, locale)}</span>
           </small>
         </div>
         <button
           className={p.saved ? "saved" : ""}
-          aria-label={p.saved ? "Remove from saved" : "Save for later"}
+          aria-label={p.saved ? t("post.unsave") : t("post.save")}
           onClick={() => void mutate(p, "saved")}
         >
           <Bookmark size={18} fill={p.saved ? "currentColor" : "none"} />
@@ -912,7 +893,7 @@ function PostCard({
       <button
         type="button"
         className="post-link"
-        aria-label={`View ${p.title}`}
+        aria-label={t("post.view", { title: p.title })}
         onClick={open}
       >
         {(p.images?.[0] || p.image) && (
@@ -932,15 +913,17 @@ function PostCard({
               </span>
             )}
             {p.images && p.images.length > 1 && (
-              <span className="album-count">{p.images.length} images</span>
+              <span className="album-count">
+                {t("post.images", { count: p.images.length })}
+              </span>
             )}
             {p.duration && <span className="duration">{p.duration}</span>}
             {p.locked && (
               <span className="locked-badge">
-                <Lock size={13} /> Locked
+                <Lock size={13} /> {t("post.locked")}
               </span>
             )}
-            <span className="kind">{postLabel(p)}</span>
+            <span className="kind">{postLabel(p, locale)}</span>
           </div>
         )}
         <div className="post-body">
@@ -956,12 +939,12 @@ function PostCard({
       <div className="post-footer">
         <button onClick={() => void mutate(p, "read")}>
           <Check size={14} />
-          {p.read ? "Read" : "Mark as read"}
+          {p.read ? t("post.isRead") : t("post.markRead")}
         </button>
         <LinkActions url={p.url} compact />
         <button
-          aria-label="Remove content"
-          title="Remove from feed"
+          aria-label={t("post.remove")}
+          title={t("post.removeTitle")}
           onClick={remove}
         >
           <Trash2 size={16} />
@@ -977,20 +960,23 @@ function SyncChoices({
   account: Account;
   change: (types: SyncType[]) => void;
 }) {
+  const { t } = useI18n();
   const selected = enabledTypes(account);
   return (
     <fieldset className="sync-choices">
       <legend>
-        Content to sync from{" "}
-        {account.platform === "youtube"
-          ? "YouTube"
-          : account.platform === "x"
-            ? "X"
-            : account.platform === "patreon"
-              ? "Patreon"
-              : account.platform === "linkedin"
-                ? "LinkedIn"
-                : account.platform}
+        {t("sync.from", {
+          platform:
+            account.platform === "youtube"
+              ? "YouTube"
+              : account.platform === "x"
+                ? "X"
+                : account.platform === "patreon"
+                  ? "Patreon"
+                  : account.platform === "linkedin"
+                    ? "LinkedIn"
+                    : account.platform,
+        })}
       </legend>
       {(sourceTypes[account.platform] || []).map((kind) => (
         <label key={kind}>
@@ -1006,12 +992,12 @@ function SyncChoices({
             }
           />
           {account.platform === "instagram" && kind === "short"
-            ? "Reels"
-            : syncLabels[kind]}
+            ? t("sync.reels")
+            : t(`sync.${kind}`)}
         </label>
       ))}
       {!selected.length && (
-        <span className="sync-paused">Sync paused for this source</span>
+        <span className="sync-paused">{t("sync.paused")}</span>
       )}
     </fieldset>
   );
@@ -1025,6 +1011,7 @@ function CreatorModal({
   close: () => void;
   done: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const dialogRef = useRef<HTMLElement>(null);
   const [name, setName] = useState(creator?.name || ""),
     [channel, setChannel] = useState(""),
@@ -1065,6 +1052,11 @@ function CreatorModal({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [busy, close]);
+  const modalPlatform = (
+    ["x", "instagram", "tiktok", "patreon", "linkedin"].includes(platform)
+      ? platform
+      : "youtube"
+  ) as "x" | "instagram" | "tiktok" | "patreon" | "linkedin" | "youtube";
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -1108,19 +1100,19 @@ function CreatorModal({
           className="close"
           onClick={close}
           disabled={busy}
-          aria-label="Close"
+          aria-label={t("modal.close")}
         >
           <X size={21} />
         </button>
-        <div className="eyebrow">CURATE YOUR CORNER</div>
+        <div className="eyebrow">{t("modal.eyebrow")}</div>
         <h2 id="modal-title">
-          {creator ? "Meet your creator." : "Someone worth following."}
+          {creator ? t("modal.editTitle") : t("modal.newTitle")}
         </h2>
-        <p>One person. All their accounts. Your choice.</p>
+        <p>{t("modal.intro")}</p>
         <form onSubmit={submit}>
           {!creator && (
             <label>
-              Source
+              {t("modal.source")}
               <select
                 value={platform}
                 onChange={(e) => {
@@ -1151,77 +1143,57 @@ function CreatorModal({
                 <option value="patreon">Patreon</option>
                 <option value="linkedin">LinkedIn</option>
               </select>
-              {platform === "x"
-                ? "X account"
-                : platform === "instagram"
-                  ? "Instagram account"
-                  : platform === "tiktok"
-                    ? "TikTok account"
-                    : platform === "patreon"
-                      ? "Patreon creator"
-                      : platform === "linkedin"
-                        ? "LinkedIn profile"
-                        : "YouTube channel"}
+              {t(`modal.account.${modalPlatform}`)}
               <input
                 autoFocus
                 required
                 placeholder={
-                  platform === "x"
-                    ? "@username or an X profile URL"
-                    : platform === "instagram"
-                      ? "@username or an Instagram profile URL"
-                      : platform === "tiktok"
-                        ? "@username or a TikTok profile URL"
-                        : platform === "patreon"
-                          ? "Creator name or a Patreon profile URL"
-                          : platform === "linkedin"
-                            ? "https://www.linkedin.com/in/name/"
-                            : "@mkbhd or a YouTube channel URL"
+                  modalPlatform === "linkedin"
+                    ? "https://www.linkedin.com/in/name/"
+                    : t(`modal.placeholder.${modalPlatform}`)
                 }
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
               />
               <small>
                 {platform === "patreon"
-                  ? "Member posts use the server's Patreon session; other accounts see public previews."
+                  ? t("modal.hint.patreon")
                   : platform === "instagram" ||
                       platform === "tiktok" ||
                       platform === "linkedin"
-                    ? "Public accounts only. The platform may block access; see source details below."
-                    : "Public channels only. No sign-in or API key needed."}
+                    ? t("modal.hint.public")
+                    : t("modal.hint.youtube")}
               </small>
             </label>
           )}
           <label>
-            Display name {creator ? "" : "(optional)"}
+            {t("modal.displayName")} {creator ? "" : t("modal.optional")}
             <input
               autoFocus={!!creator}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Use their channel name"
+              placeholder={t("modal.displayNamePlaceholder")}
             />
           </label>
           <label>
-            Topics
+            {t("modal.topics")}
             <input
               value={tags}
               onChange={(e) => setTags(e.target.value)}
-              placeholder="Technology, Design, Learning"
+              placeholder={t("modal.topicsPlaceholder")}
             />
-            <small>
-              Separate topics with commas. A creator can belong to several.
-            </small>
+            <small>{t("modal.topicsHint")}</small>
           </label>
           {creator &&
             !creator.accounts.some((a) => a.platform === "youtube") && (
               <label>
-                YouTube channel (optional)
+                {t("modal.youtubeOptional")}
                 <input
                   value={
                     accounts.find((a) => a.platform === "youtube")?.username ||
                     ""
                   }
-                  placeholder="@handle or a YouTube channel URL"
+                  placeholder={t("modal.youtubePlaceholder")}
                   onChange={(e) =>
                     setAccounts([
                       ...accounts.filter((a) => a.platform !== "youtube"),
@@ -1235,7 +1207,7 @@ function CreatorModal({
             <div className="source-settings">
               <div className="source-heading">
                 <strong>YouTube</strong>
-                <span>Public content</span>
+                <span>{t("modal.publicContent")}</span>
               </div>
               <small>
                 {accounts.find((a) => a.platform === "youtube")?.username}
@@ -1252,18 +1224,18 @@ function CreatorModal({
               />
               <small>
                 {accounts.find((a) => a.platform === "youtube")?.error ||
-                  "Choose what to fetch. Existing posts and notes are kept."}
+                  t("modal.youtubeHint")}
               </small>
             </div>
           )}
           <div className="source-settings">
             <div className="source-heading">
               <strong>X (Twitter)</strong>
-              <span>Public content</span>
+              <span>{t("modal.publicContent")}</span>
             </div>
             {!(!creator && platform === "x") && (
               <label>
-                X username or profile URL
+                {t("modal.xLabel")}
                 <input
                   value={
                     accounts.find((a) => a.platform === "x")?.username || ""
@@ -1302,17 +1274,17 @@ function CreatorModal({
             )}
             <small>
               {accounts.find((a) => a.platform === "x")?.error ||
-                "Limited public snapshot: X may return older posts and omit recent ones. No sign-in needed."}
+                t("modal.xHint")}
             </small>
           </div>
           <div className="source-settings">
             <div className="source-heading">
               <strong>Instagram</strong>
-              <span>Public content</span>
+              <span>{t("modal.publicContent")}</span>
             </div>
             {!(!creator && platform === "instagram") && (
               <label>
-                Instagram username or profile URL
+                {t("modal.instagramLabel")}
                 <input
                   value={
                     accounts.find((a) => a.platform === "instagram")
@@ -1352,12 +1324,13 @@ function CreatorModal({
             )}
             <small>
               {accounts.find((a) => a.platform === "instagram")?.error ||
-                "No login needed. Public profile embeds show a small recent preview, usually 6 posts. Posts includes albums; Shorts includes Reels. Some profiles disable embeds."}
+                t("modal.instagramHint")}
             </small>
           </div>
           <details>
             <summary>
-              Other accounts <span>TikTok · Patreon · LinkedIn</span>
+              {t("modal.otherAccounts")}{" "}
+              <span>TikTok · Patreon · LinkedIn</span>
             </summary>
             {["tiktok", "patreon", "linkedin"].map((platform) => {
               const account = accounts.find((a) => a.platform === platform) || {
@@ -1377,7 +1350,7 @@ function CreatorModal({
                       : platform[0].toUpperCase() + platform.slice(1)}
                     <input
                       value={account.username}
-                      placeholder="Username or profile URL"
+                      placeholder={t("modal.otherPlaceholder")}
                       onChange={(e) => update({ username: e.target.value })}
                     />
                   </label>
@@ -1390,12 +1363,12 @@ function CreatorModal({
                       <small>
                         {account.error ||
                           (platform === "tiktok"
-                            ? "Public videos sync on refresh. TikTok may restrict access."
+                            ? t("modal.tiktokHint")
                             : platform === "linkedin"
-                              ? "Public profile only, no sign-in. LinkedIn shows about 5 recent posts; reposts and comments are not included."
+                              ? t("modal.linkedinHint")
                               : account.phoneSync
-                                ? "Synced from your phone shortcut. Unread posts stay until you read them."
-                                : "Posts from the last few days sync on refresh. Unread posts stay until you read them.")}
+                                ? t("modal.patreonPhoneHint")
+                                : t("modal.patreonHint"))}
                       </small>
                       {platform === "patreon" && creator && (
                         <PhoneSync username={account.username} />
@@ -1433,11 +1406,15 @@ function CreatorModal({
                 }}
               >
                 <Trash2 size={15} />
-                {confirm ? "Confirm unfollow & remove posts" : "Unfollow"}
+                {confirm ? t("modal.confirmUnfollow") : t("modal.unfollow")}
               </button>
             )}
             <button className="primary" disabled={busy} type="submit">
-              {busy ? "Saving…" : creator ? "Save changes" : "Follow creator"}
+              {busy
+                ? t("modal.saving")
+                : creator
+                  ? t("modal.save")
+                  : t("modal.follow")}
               <ArrowUpRight size={16} />
             </button>
           </div>
@@ -1447,7 +1424,9 @@ function CreatorModal({
   );
 }
 createRoot(document.getElementById("root")!).render(
-  <AuthGate>
-    {(username, logout) => <App username={username} logout={logout} />}
-  </AuthGate>,
+  <I18nProvider>
+    <AuthGate>
+      {(username, logout) => <App username={username} logout={logout} />}
+    </AuthGate>
+  </I18nProvider>,
 );

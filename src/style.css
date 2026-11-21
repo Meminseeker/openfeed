@@ -2356,3 +2356,26 @@ kbd {
   color: inherit;
   font: inherit;
 }
+
+.language-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #697165;
+}
+.language-select select {
+  padding: 7px 10px;
+  border: 1px solid #cbd5bd;
+  border-radius: 7px;
+  background: #fff;
+  color: #365342;
+  font: inherit;
+}
+.sidebar-language {
+  margin: 0 12px 12px;
+}
+.auth-card .language-select {
+  display: flex;
+  justify-self: center;
+}

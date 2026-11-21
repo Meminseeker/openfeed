@@ -23,7 +23,7 @@ OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, In
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run dev`                    | `tsx server/index.ts`. Serves the app on http://localhost:3000 (loopback). Vite HMR uses its own default WebSocket port, 24678, because no `hmr.server` is configured.                                                                                                                                                                                                |
 | `npm start`                      | `NODE_ENV=production tsx …`. This still runs under **tsx**, so it does not reproduce the Docker runtime. To check the real production runtime, run `npm run build && NODE_ENV=production node server/index.ts`, or the production-runtime test.                                                                                                                       |
-| `npm test`                       | `tsx --test tests/*.test.ts`. 110 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                    |
+| `npm test`                       | `tsx --test tests/*.test.ts`. 115 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                    |
 | `npx tsx --test tests/x.test.ts` | Runs a single file. Add `--test-name-pattern="regex"` to filter by test name.                                                                                                                                                                                                                                                                                         |
 | `npm run build`                  | `tsc --noEmit && vite build`. `tsc` type-checks `src`, `server`, `tests` and `vite.config.ts`.                                                                                                                                                                                                                                                                        |
 | `npm run format`                 | Prettier with default settings (no config file): double quotes, semicolons, 2 spaces, trailing commas, 80 columns. **This script reformats `tests/fixtures/x-long-*.html` (there is no `.prettierignore`), and tests depend on those files' exact bytes.** Restore them afterwards with `git checkout tests/fixtures`, or run Prettier only on the files you changed. |
@@ -68,6 +68,9 @@ src/
   LinkActions.tsx  Copy-link / Open-source buttons (PostCard + viewer)
   RichText.tsx     Renders sanitized RichBlock[] (Patreon bodies) as React elements
   AuthGate.tsx     Login/signup/claim gate; renders App once authenticated
+  i18n.ts          Pure translation core: Locale, detectLocale, initialLocale, translate (tested)
+  locales/         en.ts (source keys) and tr.ts (typed as Messages, so missing keys fail tsc)
+  LocaleProvider.tsx I18nProvider context (localStorage `openfeed.locale`), useI18n(), LanguageSelect
   api.ts           fetch wrapper (X-OpenFeed-User header, 401 → logout event), writeNotes serializer
   types.ts         Shared models (SERVER IMPORTS THIS)
   clean-url.ts     cleanPastedUrl (SERVER IMPORTS THIS)
@@ -378,6 +381,13 @@ There is no registry. The platform list is hardcoded in several places:
   - Autosave runs 600 ms after typing stops. `writeNotes` serializes PATCHes per account and post.
   - A local draft takes priority over the server value until the save succeeds.
 - **PWA:** the service worker registers only in production. `public/sw.js` caches **only** `offline.html` (cache `openfeed-offline-v1`; bump the name when that page changes) and never touches `/api` or media. `tests/pwa.test.ts` checks this and the manifest icon sizes.
+- **i18n:** every user-visible string in `src/` comes from `t(key, params)` via `useI18n()`; there are no hardcoded UI strings.
+  - Keys live in `src/locales/en.ts`. Add a key there first, then to `tr.ts` (tsc and `tests/i18n.test.ts` enforce matching keys and `{placeholder}` names). Plural entries are `{one, other}` selected by the `count` param through `Intl.PluralRules`.
+  - The locale is detected once from `navigator.languages` (primary subtag) unless a saved choice exists; `I18nProvider` wraps `AuthGate` in `main.tsx` and sets `<html lang>` and `document.title`.
+  - Pure helpers take the locale as a trailing optional arg defaulting to `"en"`: `relativeTime(published, now, locale)`, `postLabel(post, locale)`. Date formatting passes `locale` to `toLocaleString`.
+  - `contentFilters` in `feed-filters.ts` is a list of keys; labels are `filter.<key>`. The `"All topics"` sentinel stays English in state and is displayed as `t("topics.all")`.
+  - Server messages (`{error}` bodies, `account.error` warnings) are English and shown as-is.
+  - To add a language: add `src/locales/<code>.ts` typed `Messages`, then register it in `dictionaries` and `localeNames` in `i18n.ts`.
 - **Styling:**
   - One global `style.css` with short kebab-case semantic class names and state classes such as `.active` and `.read`.
   - Colors are hardcoded hex values (a green and cream palette), with no CSS variables and no dark mode.

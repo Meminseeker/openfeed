@@ -36,6 +36,7 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 - Combine topic, multiple-creator, platform-specific content-type, text-search, and unread filters. Type controls distinguish YT videos/Shorts/community, X posts/reposts, and IG posts/albums/videos/Reels. The creator checklist follows the selected topic; selections outside that topic are cleared. All creators are selected initially; explicitly unselecting everyone shows no content.
 - Save posts for later, mark individual posts or the current filtered result as read, and unfollow creators.
 - Persistent local state, explicit refresh, partial-source error reporting, responsive layout, and finite batches of 24 posts. New creators trigger a refresh.
+- Use the interface in English or Turkish. See [Languages](#languages).
 
 ## YouTube ingestion and limits
 
@@ -99,11 +100,20 @@ Notes autosave after 600 ms and flush when switching content or closing. Writes 
 
 The app has individual signup/login accounts. Each account owns its creators, posts, read state, notes, playlists and links. Passwords are salted with scrypt; sessions use expiring HttpOnly cookies and are revoked on logout. Local runs listen on loopback; cloud deployments use HTTPS through Caddy. Follow [the deployment guide](docs/deployment.md), including the existing-workspace claim procedure, before upgrading. The API rejects unapproved hosts and cross-origin requests.
 
+## Languages
+
+The interface is available in English and Turkish (Türkçe). On the first visit OpenFeed uses the first browser language it supports (for example `tr-TR` selects Turkish); any other browser language falls back to English. Change the language with the **Language** selector in the sidebar or at the bottom of the login form. The choice is saved in this browser (`localStorage`, key `openfeed.locale`), so it applies before you log in and is not synced to other devices. Dates, relative times, playback-error text and the YouTube player's own controls follow the chosen language.
+
+Some text stays in English: messages produced by the server (validation errors, sync warnings and source errors shown on creators), creator names, topics and post content, and the offline page.
+
+To add a language, copy `src/locales/en.ts` to a new file, translate every value (keep the `{placeholder}` names), and register it in `dictionaries` and `localeNames` in `src/i18n.ts`. `tests/i18n.test.ts` fails if a key or placeholder is missing.
+
 ## Structure
 
 - `src/main.tsx`: feed, creator management, saved posts, filtering
 - `src/ContentViewer.tsx`: interactive content viewer and keyboard controls
 - `src/Notes.tsx`: autosaved notes and timestamp navigation
+- `src/i18n.ts`, `src/locales/`: translations and language detection; `src/LocaleProvider.tsx` holds the React context and language selector
 - `src/style.css`: responsive interface
 - `src/types.ts`: platform-neutral creator and post models
 - `server/index.ts`: local HTTP API and SQLite persistence

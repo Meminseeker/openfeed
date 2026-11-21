@@ -3,6 +3,7 @@ import { StickyNote, Clock, Save } from "lucide-react";
 import { writeNotes, activeAccount } from "./api";
 import { timestamp, noteTimestamps } from "./viewer-shortcuts";
 import type { Post } from "./types";
+import { useI18n } from "./LocaleProvider";
 function localDraft(id: string) {
   try {
     return localStorage.getItem(id);
@@ -26,6 +27,7 @@ export function Notes({
   currentTime?: () => number;
   seek?: (seconds: number) => void;
 }) {
+  const { t, locale } = useI18n();
   const account = useRef(activeAccount()).current;
   const draftKey = useRef(
     `openfeed.notes.${activeAccount()}.${post.id}`,
@@ -33,7 +35,7 @@ export function Notes({
   const [draft, setDraft] = useState(
       () => localDraft(draftKey) ?? post.notes ?? "",
     ),
-    [status, setStatus] = useState("Saved"),
+    [status, setStatus] = useState<"saved" | "saving" | "unsaved">("saved"),
     [error, setError] = useState("");
   const latest = useRef(draft),
     saved = useRef(post.notes ?? ""),
@@ -48,7 +50,7 @@ export function Notes({
     if (snapshot === saved.current && pending.current === 0) return;
     pending.current++;
     if (mounted.current) {
-      setStatus("Saving…");
+      setStatus("saving");
       setError("");
     }
     try {
@@ -60,11 +62,11 @@ export function Notes({
           localStorage.removeItem(draftKey);
         } catch {}
       }
-      if (mounted.current && latest.current === snapshot) setStatus("Saved");
+      if (mounted.current && latest.current === snapshot) setStatus("saved");
     } catch (e) {
       if (mounted.current) {
-        setStatus("Unsaved");
-        setError((e as Error).message + " Your draft is kept in this browser.");
+        setStatus("unsaved");
+        setError(t("notes.draftKept", { message: (e as Error).message }));
       }
     } finally {
       pending.current--;
@@ -75,14 +77,14 @@ export function Notes({
     latest.current = value;
     setDraft(value);
     storeDraft(draftKey, value);
-    setStatus("Unsaved");
+    setStatus("unsaved");
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 600);
   };
   useEffect(() => {
     mounted.current = true;
     if (latest.current !== saved.current) {
-      setStatus("Unsaved");
+      setStatus("unsaved");
       timer.current = setTimeout(() => void flush(), 600);
     }
     const unloading = () => storeDraft(draftKey, latest.current);
@@ -98,10 +100,10 @@ export function Notes({
     <aside className="notes-panel">
       <div className="notes-heading">
         <StickyNote size={17} />
-        <h3>Your notes</h3>
-        <span role="status">{status}</span>
+        <h3>{t("notes.heading")}</h3>
+        <span role="status">{t(`notes.${status}`)}</span>
       </div>
-      <p>A thought, a question, something to keep.</p>
+      <p>{t("notes.intro")}</p>
       {currentTime && (
         <button
           className="timestamp-button"
@@ -112,24 +114,27 @@ export function Notes({
           }
         >
           <Clock size={14} />
-          Add current timestamp
+          {t("notes.addTimestamp")}
         </button>
       )}
       <textarea
-        aria-label="Content notes"
+        aria-label={t("notes.label")}
         maxLength={50000}
         value={draft}
         onChange={(e) => change(e.target.value)}
-        placeholder="What stood out to you?"
+        placeholder={t("notes.placeholder")}
         spellCheck
       />
       <div className="notes-bottom">
         <small>
-          Autosaved locally · {draft.length.toLocaleString()}/50,000
+          {t("notes.autosaved", {
+            count: draft.length.toLocaleString(locale),
+            max: (50000).toLocaleString(locale),
+          })}
         </small>
         <button onClick={() => void flush()}>
           <Save size={14} />
-          Save now
+          {t("notes.saveNow")}
         </button>
       </div>
       {error && (
@@ -139,7 +144,7 @@ export function Notes({
       )}
       {seek && noteTimestamps(draft).length > 0 && (
         <div className="note-jumps">
-          <small>JUMP TO A NOTE</small>
+          <small>{t("notes.jump")}</small>
           {noteTimestamps(draft).map((t) => (
             <button key={t.label} onClick={() => seek(t.seconds)}>
               {t.label}

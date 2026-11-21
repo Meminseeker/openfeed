@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, setActiveAccount } from "./api";
+import { useI18n, LanguageSelect } from "./LocaleProvider";
 export function AuthGate({
   children,
 }: {
   children: (username: string, logout: () => void) => ReactNode;
 }) {
+  const { t } = useI18n();
   const [user, setUser] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [signup, setSignup] = useState(false),
@@ -26,7 +28,7 @@ export function AuthGate({
     window.addEventListener("openfeed:logout", expired);
     return () => window.removeEventListener("openfeed:logout", expired);
   }, []);
-  if (loading) return <div className="empty">Opening OpenFeed…</div>;
+  if (loading) return <div className="empty">{t("app.opening")}</div>;
   if (user)
     return children(user, () => {
       void api("auth/logout", "POST")
@@ -67,13 +69,9 @@ export function AuthGate({
       >
         <img src="/icons/app-192.png" width="64" height="64" alt="" />
         <h1>OpenFeed</h1>
-        <p>
-          {signup
-            ? "A personal space for the content you choose."
-            : "Welcome back to your personal feed."}
-        </p>
+        <p>{signup ? t("auth.signupIntro") : t("auth.loginIntro")}</p>
         <label>
-          Username
+          {t("auth.username")}
           <input
             name="username"
             autoComplete="username"
@@ -84,7 +82,7 @@ export function AuthGate({
           />
         </label>
         <label>
-          Password
+          {t("auth.password")}
           <input
             type="password"
             name="password"
@@ -94,20 +92,17 @@ export function AuthGate({
             maxLength={128}
           />
         </label>
-        <small>At least 12 characters.</small>
+        <small>{t("auth.passwordHint")}</small>
         {signup && claim && (
           <label>
-            Workspace setup token
+            {t("auth.setupToken")}
             <input
               name="setupToken"
               type="password"
               autoComplete="off"
               required
             />
-            <small>
-              Use OPENFEED_SETUP_TOKEN from your server configuration to claim
-              the existing workspace.
-            </small>
+            <small>{t("auth.setupTokenHint")}</small>
           </label>
         )}
         {error && (
@@ -116,7 +111,11 @@ export function AuthGate({
           </p>
         )}
         <button className="primary" disabled={busy}>
-          {busy ? "Please wait…" : signup ? "Create account" : "Log in"}
+          {busy
+            ? t("auth.wait")
+            : signup
+              ? t("auth.createAccount")
+              : t("auth.login")}
         </button>
         <button
           type="button"
@@ -125,8 +124,9 @@ export function AuthGate({
             setError("");
           }}
         >
-          {signup ? "Already have an account? Log in" : "Create an account"}
+          {signup ? t("auth.toLogin") : t("auth.toSignup")}
         </button>
+        <LanguageSelect className="auth-language" />
       </form>
     </main>
   );

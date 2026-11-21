@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Copy, Check, Smartphone } from "lucide-react";
 import { api } from "./api";
+import { useI18n } from "./LocaleProvider";
 
 interface PhoneSyncInfo {
   enabled: boolean;
@@ -17,6 +18,7 @@ interface PhoneSyncInfo {
 }
 
 function CopyField({ label, value }: { label: string; value: string }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
     <label className="copy-field">
@@ -25,7 +27,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
         <input readOnly value={value} onFocus={(e) => e.target.select()} />
         <button
           type="button"
-          aria-label={`Copy ${label}`}
+          aria-label={t("phone.copy", { label })}
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(value);
@@ -43,6 +45,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
 // Setup values for the iOS Shortcut that fetches Patreon on the phone and
 // uploads the raw page to OpenFeed.
 export function PhoneSync({ username }: { username: string }) {
+  const { t, locale } = useI18n();
   const [info, setInfo] = useState<PhoneSyncInfo>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -55,7 +58,7 @@ export function PhoneSync({ username }: { username: string }) {
       // The token is returned only once; keep it visible after later updates.
       setInfo((prev) => ({ ...next, token: next.token ?? prev?.token }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load phone sync.");
+      setError(e instanceof Error ? e.message : t("phone.loadError"));
     } finally {
       setBusy(false);
     }
@@ -75,31 +78,29 @@ export function PhoneSync({ username }: { username: string }) {
         disabled={busy}
         onClick={() => void load(false)}
       >
-        <Smartphone size={15} /> Phone sync setup
+        <Smartphone size={15} /> {t("phone.setup")}
       </button>
     );
   return (
     <div className="phone-sync">
       {!creator ? (
-        <p>Save this creator first, then reopen phone sync setup.</p>
+        <p>{t("phone.saveFirst")}</p>
       ) : !creator.campaignId || !creator.patreonUrl || !creator.importUrl ? (
         <>
           <p>
-            The server cannot reach Patreon to look up this creator, so enter
-            the campaign ID once. Open the lookup in a browser and copy the
-            number after <code>"id":</code>.
+            {t("phone.lookupIntro")} <code>"id":</code>.
           </p>
           {creator.lookupUrl && (
             <a href={creator.lookupUrl} target="_blank" rel="noreferrer">
-              Open Patreon lookup
+              {t("phone.openLookup")}
             </a>
           )}
           <label className="copy-field">
-            <span>Patreon campaign ID</span>
+            <span>{t("phone.campaignId")}</span>
             <span>
               <input
                 inputMode="numeric"
-                placeholder="e.g. 6460488"
+                placeholder={t("phone.campaignPlaceholder")}
                 value={campaignId}
                 onChange={(e) => setCampaignId(e.target.value.trim())}
                 onKeyDown={(e) => {
@@ -115,33 +116,29 @@ export function PhoneSync({ username }: { username: string }) {
             disabled={busy || !/^\d+$/.test(campaignId)}
             onClick={() => void saveCampaign()}
           >
-            Save campaign ID
+            {t("phone.saveCampaign")}
           </button>
         </>
       ) : (
         <>
           <p>
             {creator.lastSync
-              ? `Last phone upload: ${new Date(creator.lastSync).toLocaleString()}.`
-              : "No phone upload yet."}{" "}
-            The shortcut downloads the latest Patreon posts with your phone's
-            session and uploads them here.
+              ? t("phone.lastUpload", {
+                  date: new Date(creator.lastSync).toLocaleString(locale),
+                })
+              : t("phone.noUpload")}{" "}
+            {t("phone.explain")}
           </p>
-          <CopyField label="1 · Patreon URL" value={creator.patreonUrl} />
-          <CopyField
-            label="2 · OpenFeed upload URL"
-            value={creator.importUrl}
-          />
+          <CopyField label={t("phone.patreonUrl")} value={creator.patreonUrl} />
+          <CopyField label={t("phone.uploadUrl")} value={creator.importUrl} />
           {info.token ? (
             <CopyField
-              label="3 · Authorization header value (shown once)"
+              label={t("phone.header")}
               value={`Bearer ${info.token}`}
             />
           ) : (
             <p>
-              {info.enabled
-                ? "A phone token already exists. Creating a new one replaces it."
-                : "Create a token for the shortcut's Authorization header."}
+              {info.enabled ? t("phone.tokenExists") : t("phone.tokenCreate")}
             </p>
           )}
           {!info.token && (
@@ -150,7 +147,7 @@ export function PhoneSync({ username }: { username: string }) {
               disabled={busy}
               onClick={() => void load(true)}
             >
-              {info.enabled ? "Replace phone token" : "Create phone token"}
+              {info.enabled ? t("phone.replaceToken") : t("phone.createToken")}
             </button>
           )}
         </>

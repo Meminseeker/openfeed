@@ -1,4 +1,5 @@
 import type { Post } from "./types";
+import { useI18n } from "./LocaleProvider";
 export type ReadStatus = "all" | "unread" | "read";
 export type ContentOrder = "newest" | "oldest";
 export function sortContents(
@@ -28,9 +29,10 @@ export function ContentOptions({
   order: ContentOrder;
   setOrder: (value: ContentOrder) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="content-options">
-      <div className="feed-tabs" aria-label="Read status">
+      <div className="feed-tabs" aria-label={t("status.label")}>
         {(["all", "unread", "read"] as const).map((value) => (
           <button
             key={value}
@@ -38,11 +40,7 @@ export function ContentOptions({
             aria-pressed={status === value}
             onClick={() => setStatus(value)}
           >
-            {value === "all"
-              ? "All posts"
-              : value === "unread"
-                ? "Unread"
-                : "Read"}
+            {t(`status.${value}`)}
             {value === "unread" && unreadCount !== undefined && (
               <span>{unreadCount}</span>
             )}
@@ -50,12 +48,12 @@ export function ContentOptions({
         ))}
       </div>
       <select
-        aria-label="Content order"
+        aria-label={t("order.label")}
         value={order}
         onChange={(e) => setOrder(e.target.value as ContentOrder)}
       >
-        <option value="newest">Newest to oldest</option>
-        <option value="oldest">Oldest to newest</option>
+        <option value="newest">{t("order.newest")}</option>
+        <option value="oldest">{t("order.oldest")}</option>
       </select>
     </div>
   );

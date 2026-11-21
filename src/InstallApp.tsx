@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useI18n } from "./LocaleProvider";
 interface InstallEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: string }>;
 }
 export function InstallApp() {
+  const { t } = useI18n();
   const [prompt, setPrompt] = useState<InstallEvent | null>(null);
   const [help, setHelp] = useState(false);
   const [installed, setInstalled] = useState(
@@ -39,15 +41,9 @@ export function InstallApp() {
           setPrompt(null);
         }}
       >
-        Install app
+        {t("install.button")}
       </button>
-      {help && (
-        <p>
-          On iPhone or iPad, open in Safari, tap Share, then Add to Home Screen.
-          On Android, choose Install app or Add to Home Screen in your browser
-          menu.
-        </p>
-      )}
+      {help && <p>{t("install.help")}</p>}
     </div>
   );
 }

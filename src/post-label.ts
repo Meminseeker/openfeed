@@ -1,19 +1,23 @@
+import { translate, type Locale, type MessageKey } from "./i18n";
 import type { Post } from "./types";
-export function postLabel(p: Post) {
+function labelKey(p: Post): MessageKey {
   const platform = p.platform || "youtube";
-  if (platform === "x") return p.repost ? "X Repost" : "X Post";
+  if (platform === "x") return p.repost ? "label.xRepost" : "label.xPost";
   if (platform === "instagram")
     return p.kind === "short"
-      ? "Instagram Reel"
+      ? "label.instagramReel"
       : p.kind === "video"
-        ? "Instagram Video"
-        : "Instagram Post";
-  if (platform === "tiktok") return "TikTok Video";
-  if (platform === "patreon") return "Patreon Post";
-  if (platform === "linkedin") return "LinkedIn Post";
+        ? "label.instagramVideo"
+        : "label.instagramPost";
+  if (platform === "tiktok") return "label.tiktokVideo";
+  if (platform === "patreon") return "label.patreonPost";
+  if (platform === "linkedin") return "label.linkedinPost";
   return p.kind === "short"
-    ? "YouTube Shorts"
+    ? "label.youtubeShorts"
     : p.kind === "community"
-      ? "YouTube Community"
-      : "YouTube Video";
+      ? "label.youtubeCommunity"
+      : "label.youtubeVideo";
+}
+export function postLabel(p: Post, locale: Locale = "en") {
+  return translate(locale, labelKey(p));
 }

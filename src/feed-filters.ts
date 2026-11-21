@@ -1,15 +1,16 @@
 import type { Creator, Post } from "./types";
+// Labels live in the locale files under filter.<key>.
 export const contentFilters = [
-  ["youtube:video", "YT videos"],
-  ["youtube:short", "YT Shorts"],
-  ["youtube:community", "YT community"],
-  ["x:post", "X posts / reposts"],
-  ["instagram:post", "IG posts / albums"],
-  ["instagram:video", "IG videos"],
-  ["instagram:short", "IG Reels"],
-  ["tiktok:video", "TikTok videos"],
-  ["patreon:post", "Patreon posts"],
-  ["linkedin:post", "LinkedIn posts"],
+  "youtube:video",
+  "youtube:short",
+  "youtube:community",
+  "x:post",
+  "instagram:post",
+  "instagram:video",
+  "instagram:short",
+  "tiktok:video",
+  "patreon:post",
+  "linkedin:post",
 ] as const;
 export function contentFilterKey(post: Post) {
   return `${post.platform || "youtube"}:${post.kind}`;
