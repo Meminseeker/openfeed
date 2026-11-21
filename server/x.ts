@@ -323,10 +323,13 @@ export type XSource = {
   // Last successful refresh (ISO); bounds the next search.
   checkedAt?: string;
   includeReposts: boolean;
+  // Cached numeric X user id, needed only by the timeline fallback.
+  userId?: string;
 };
 export type XSyncResult = Omit<ReturnType<typeof parseXTimeline>, "warning"> & {
   warning?: string;
   newestId?: string;
+  userId?: string;
 };
 export const xSourceKey = (username: string, includeReposts: boolean) =>
   `${username.toLowerCase()}|${includeReposts ? "reposts" : "posts"}`;
@@ -336,17 +339,24 @@ const socialDataMaxPages = 10;
 // Re-read posts from shortly before the last refresh, in case search indexing lagged.
 const socialDataOverlapMs = 10 * 60 * 1000;
 let socialDataNextSlot = 0;
+// When search fails, each account's own timeline is read instead, but at most
+// once per this interval: timeline pages are billed per post, even old ones.
+const socialDataFallbackMs = 6 * 60 * 60 * 1000;
+const socialDataFallbackPages = 3;
 
 // Requests are spaced (20 s by default, so at most 3 per minute). SocialData
 // does not bill the first 3 empty responses per minute, so quiet hourly checks
 // stay free.
-async function socialData(path: string): Promise<any> {
-  const gap = Number(process.env.SOCIALDATA_MIN_INTERVAL_MS ?? 20000);
-  const interval = Number.isFinite(gap) && gap >= 0 ? gap : 20000;
-  const now = Date.now();
-  const slot = Math.max(now, socialDataNextSlot);
-  socialDataNextSlot = slot + interval;
-  if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
+// Timeline pages are rarely empty, so they skip the spacing.
+async function socialData(path: string, spaced = true): Promise<any> {
+  if (spaced) {
+    const gap = Number(process.env.SOCIALDATA_MIN_INTERVAL_MS ?? 20000);
+    const interval = Number.isFinite(gap) && gap >= 0 ? gap : 20000;
+    const now = Date.now();
+    const slot = Math.max(now, socialDataNextSlot);
+    socialDataNextSlot = slot + interval;
+    if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
+  }
   const response = await fetch(`https://api.socialdata.tools${path}`, {
     headers: {
       Authorization: `Bearer ${process.env.SOCIALDATA_API_KEY?.trim()}`,
@@ -363,10 +373,23 @@ async function socialData(path: string): Promise<any> {
   if (response.status === 401 || response.status === 403)
     throw new Error("SocialData rejected the API key (SOCIALDATA_API_KEY).");
   if (!response.ok)
-    throw new Error(
-      `SocialData request failed (HTTP ${response.status}). Try again later.`,
+    throw Object.assign(
+      new Error(
+        `SocialData request failed (HTTP ${response.status}). Try again later.`,
+      ),
+      { status: response.status },
     );
   return response.json();
+}
+// Upstream failures (5xx, timeouts, network) can be worked around; billing and
+// key errors cannot.
+function socialDataOutage(error: unknown) {
+  const status = (error as { status?: number })?.status;
+  if (status !== undefined) return status >= 500;
+  const name = (error as { name?: string })?.name;
+  return (
+    name === "TypeError" || name === "TimeoutError" || name === "AbortError"
+  );
 }
 
 // X ids are snowflakes: the top bits are milliseconds since 2010-11-04.
@@ -435,6 +458,70 @@ function socialDataResult(
   };
 }
 
+// Reads one account's own timeline when search is failing. Runs only when the
+// account's last successful refresh is at least 6 hours old.
+async function socialDataFallback(
+  source: XSource,
+  searchError: unknown,
+  now: number,
+): Promise<XSyncResult | Error> {
+  if (!socialDataOutage(searchError)) return searchError as Error;
+  const last = Date.parse(source.checkedAt || "");
+  if (Number.isFinite(last) && now - last < socialDataFallbackMs)
+    return new Error(
+      `SocialData search is failing. The account timeline is used instead at most every 6 hours; next after ${new Date(last + socialDataFallbackMs).toISOString().slice(11, 16)} UTC.`,
+    );
+  try {
+    let userId = source.userId;
+    if (!userId || !/^\d+$/.test(userId)) {
+      const user = await socialData(`/twitter/user/${source.username}`, false);
+      if (!user) throw new Error("X account was not found.");
+      if (user.protected)
+        throw new Error("Private X accounts are not supported.");
+      userId = String(user.id_str || "");
+      if (!/^\d+$/.test(userId))
+        throw new Error("SocialData did not return this X account's id.");
+    }
+    const since =
+      source.sinceId && /^\d+$/.test(source.sinceId)
+        ? BigInt(source.sinceId)
+        : undefined;
+    const tweets: any[] = [];
+    let cursor = "";
+    let complete = false;
+    for (let page = 0; page < socialDataFallbackPages; page++) {
+      const json = await socialData(
+        `/twitter/user/${userId}/tweets${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        false,
+      );
+      const batch = Array.isArray(json?.tweets) ? json.tweets : [];
+      tweets.push(...batch);
+      cursor = typeof json?.next_cursor === "string" ? json.next_cursor : "";
+      // Stop once the page reaches posts already stored (pinned posts aside).
+      const reachedKnown =
+        since === undefined ||
+        batch.some(
+          (t: any) =>
+            !t.is_pinned &&
+            /^\d+$/.test(t.id_str || "") &&
+            BigInt(t.id_str) <= since,
+        );
+      if (!batch.length || !cursor || reachedKnown) {
+        complete = true;
+        break;
+      }
+    }
+    const result = socialDataResult(tweets, source, complete);
+    return {
+      ...result,
+      userId,
+      warning: `SocialData search is failing, so this account's timeline was read instead (at most every 6 hours).${result.warning ? ` ${result.warning}` : ""}`,
+    };
+  } catch (error) {
+    return error as Error;
+  }
+}
+
 // Fetches every source with as few searches as possible. Returns a result or an
 // Error per xSourceKey, so one failing batch never affects another.
 export async function syncXSources(
@@ -489,7 +576,7 @@ export async function syncXSources(
       }
       results.set(key, socialDataResult(tweets, source, true));
     } catch (error) {
-      results.set(key, error as Error);
+      results.set(key, await socialDataFallback(source, error, now));
     }
   }
 
@@ -525,7 +612,8 @@ export async function syncXSources(
           }
         }
       } catch (error) {
-        for (const [key] of batch) results.set(key, error as Error);
+        for (const [key, source] of batch)
+          results.set(key, await socialDataFallback(source, error, now));
       }
     }
   }

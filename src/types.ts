@@ -30,6 +30,8 @@ export interface Account {
   phoneSync?: string;
   syncTypes?: SyncType[];
   xSinceId?: string;
+  // Numeric X user id, cached by the SocialData timeline fallback.
+  xUserId?: string;
   lastSync?: string;
   error?: string;
 }

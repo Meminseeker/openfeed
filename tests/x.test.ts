@@ -628,3 +628,120 @@ test("SocialData spaces requests so quiet checks stay within the free empty-resp
     "100",
   );
 });
+
+test("when SocialData search fails, accounts not refreshed for 6 hours fall back to their own timeline", async () => {
+  const stale = "2026-11-20T05:00:00.000Z"; // 7 h before `now`
+  await withSocialData(
+    (url) => {
+      if (url.pathname === "/twitter/search") return 500;
+      if (url.pathname === "/twitter/user/alice")
+        return { id_str: "42", screen_name: "alice", protected: false };
+      if (url.pathname === "/twitter/user/42/tweets")
+        return {
+          tweets: [
+            sdTweet("900", "pinned_old", { is_pinned: true }),
+            sdTweet("300", "alice"),
+            sdTweet("200", "alice"),
+            sdTweet("100", "alice"),
+            sdTweet("90", "alice"),
+          ],
+          next_cursor: "more",
+        };
+      if (url.pathname === "/twitter/user/77/tweets")
+        return { tweets: [sdTweet("500", "bob")], next_cursor: null };
+      throw new Error(`unexpected ${url}`);
+    },
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          {
+            username: "alice",
+            sinceId: "100",
+            checkedAt: stale,
+            includeReposts: false,
+          },
+          {
+            username: "bob",
+            sinceId: "100",
+            checkedAt: stale,
+            includeReposts: false,
+            userId: "77",
+          },
+          {
+            username: "carol",
+            sinceId: "100",
+            checkedAt: "2026-11-20T09:30:00.000Z",
+            includeReposts: false,
+          },
+        ],
+        now,
+      );
+      const paths = calls.map((c) => c.url.pathname);
+      assert.deepEqual(paths, [
+        "/twitter/search",
+        "/twitter/user/alice",
+        "/twitter/user/42/tweets",
+        "/twitter/user/77/tweets",
+      ]);
+      const alice = results.get(xSourceKey("alice", false));
+      assert.ok(alice && !(alice instanceof Error));
+      assert.deepEqual(
+        alice.posts.map((p) => p.id),
+        ["x:300", "x:200"],
+      );
+      assert.equal(alice.userId, "42");
+      assert.equal(alice.newestId, "300");
+      assert.match(alice.warning!, /timeline was read instead/);
+      const bob = results.get(xSourceKey("bob", false));
+      assert.ok(bob && !(bob instanceof Error));
+      assert.deepEqual(
+        bob.posts.map((p) => p.id),
+        ["x:500"],
+      );
+      const carol = results.get(xSourceKey("carol", false));
+      assert.ok(carol instanceof Error);
+      assert.match(
+        carol.message,
+        /at most every 6 hours; next after 15:30 UTC/,
+      );
+    },
+    "100000",
+  );
+});
+
+test("SocialData timeline fallback is not used for billing or key errors, and reports missing accounts", async () => {
+  await withSocialData(
+    () => 402,
+    async (calls) => {
+      const results = await syncXSources(
+        [
+          {
+            username: "alice",
+            sinceId: "1",
+            checkedAt: "2026-11-01T00:00:00Z",
+            includeReposts: false,
+          },
+        ],
+        now,
+      );
+      assert.equal(calls.length, 1);
+      assert.match(
+        (results.get(xSourceKey("alice", false)) as Error).message,
+        /balance is empty/,
+      );
+    },
+  );
+  await withSocialData(
+    (url) => (url.pathname === "/twitter/search" ? 503 : 404),
+    async () => {
+      const results = await syncXSources(
+        [{ username: "ghost", includeReposts: false }],
+        now,
+      );
+      assert.match(
+        (results.get(xSourceKey("ghost", false)) as Error).message,
+        /not found/,
+      );
+    },
+  );
+});

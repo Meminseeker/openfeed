@@ -721,6 +721,7 @@ async function syncContents() {
               .map((a) => ({
                 username: a.username,
                 sinceId: a.xSinceId,
+                userId: a.xUserId,
                 checkedAt: a.lastSync,
                 includeReposts: enabledTypes(a).includes("repost"),
               })),
@@ -840,6 +841,8 @@ async function syncContents() {
           }
           if ("newestId" in result && typeof result.newestId === "string")
             source.xSinceId = result.newestId;
+          if ("userId" in result && typeof result.userId === "string")
+            source.xUserId = result.userId;
           if (campaignId) source.campaignId = campaignId;
           source.lastSync = new Date().toISOString();
           source.error = result.warning || undefined;
