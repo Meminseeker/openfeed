@@ -1,4 +1,5 @@
 import type { Post } from "../src/types.ts";
+import { notice, userError } from "../src/notices/index.ts";
 
 // LinkedIn has no API for reading another member's posts. Logged-out profile
 // pages embed schema.org JSON-LD with a few recent posts, and each post has a
@@ -13,7 +14,12 @@ const isLinkedInHost = (host: string) =>
 export function linkedinUsername(input: string) {
   let value = input.trim();
   if (/^https?:\/\//i.test(value)) {
-    const url = new URL(value);
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw userError("linkedin.invalidUrl");
+    }
     if (
       url.protocol !== "https:" ||
       !isLinkedInHost(url.hostname) ||
@@ -21,26 +27,21 @@ export function linkedinUsername(input: string) {
       url.password ||
       url.port
     )
-      throw new Error("Use a LinkedIn profile name or HTTPS profile URL.");
+      throw userError("linkedin.profileNameOrUrl");
     if (/^\/(company|school|showcase)\//.test(url.pathname))
-      throw new Error(
-        "Only personal LinkedIn profiles (linkedin.com/in/…) are supported.",
-      );
+      throw userError("linkedin.personalProfilesOnly");
     const slug = url.pathname.match(/^\/in\/([^/]+)\/?$/)?.[1];
-    if (!slug)
-      throw new Error("Use a LinkedIn profile URL, not a post or other page.");
+    if (!slug) throw userError("linkedin.profileUrlNotPost");
     value = slug;
   }
   try {
     value = normalizeSlug(decodeURIComponent(value));
   } catch {
-    throw new Error("Enter a valid LinkedIn profile name.");
+    throw userError("linkedin.invalidProfileName");
   }
   // Validate the stored form: lowercasing can add combining marks (İ → i̇).
   if (!/^[\p{L}\p{N}][\p{L}\p{M}\p{N}_-]{2,99}$/u.test(value))
-    throw new Error(
-      "Enter a valid LinkedIn profile name (the part after linkedin.com/in/).",
-    );
+    throw userError("linkedin.invalidProfileNameHint");
   return value;
 }
 const normalizeSlug = (value: string) => value.normalize("NFC").toLowerCase();
@@ -205,10 +206,7 @@ export function parseLinkedInProfile(
     for (const child of Object.values(value)) walk(child, depth + 1);
   }
   for (const value of jsonLd(html)) walk(value);
-  if (!person && !posts.size)
-    throw new Error(
-      "LinkedIn did not return a public profile. The profile may be private, hidden from logged-out visitors, or blocked for this server. Existing posts are kept.",
-    );
+  if (!person && !posts.size) throw userError("linkedin.noPublicProfile");
   return {
     posts: [...posts.values()],
     name: typeof person?.name === "string" ? person.name : undefined,
@@ -219,6 +217,7 @@ export function parseLinkedInProfile(
     ),
     warning:
       "LinkedIn shows logged-out visitors only a few recent posts (usually 5); reposts and comments are not included.",
+    warningNotices: [notice("linkedin.limitedCoverage")],
   };
 }
 
@@ -334,15 +333,13 @@ async function fetchEmbed(type: UrnType, id: string) {
   );
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error(
-      response.status === 404
-        ? "LinkedIn did not expose this post. It may be private, deleted, or visible to members only."
-        : `LinkedIn returned HTTP ${response.status} for this post.`,
-    );
+    throw response.status === 404
+      ? userError("linkedin.postNotExposed")
+      : userError("linkedin.postHttpError", { status: response.status });
   }
   const html = await response.text();
   if (!html.includes("data-activity-urn="))
-    throw new Error("LinkedIn did not return a public post embed.");
+    throw userError("linkedin.noPublicEmbed");
   return parseLinkedInEmbed(html);
 }
 
@@ -366,19 +363,15 @@ export async function syncLinkedIn(
       /^\/(authwall|login|checkpoint|signup|uas)\b/.test(final.pathname))
   ) {
     await response.body?.cancel();
-    throw new Error(
-      "LinkedIn asked for sign-in instead of showing the public profile. It may be limiting this server; existing posts are kept.",
-    );
+    throw userError("linkedin.signInWall");
   }
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error(
-      response.status === 404
-        ? "LinkedIn profile not found."
-        : response.status === 999 || response.status === 429
-          ? `LinkedIn refused the request (HTTP ${response.status}). The profile may not exist, or LinkedIn is limiting requests from this server. Existing posts are kept.`
-          : `LinkedIn refresh failed (HTTP ${response.status}). Existing posts are kept.`,
-    );
+    throw response.status === 404
+      ? userError("linkedin.profileNotFound")
+      : response.status === 999 || response.status === 429
+        ? userError("linkedin.refused", { status: response.status })
+        : userError("linkedin.refreshFailed", { status: response.status });
   }
   const result = parseLinkedInProfile(
     await response.text(),
@@ -418,13 +411,14 @@ export async function syncLinkedIn(
     avatar: result.avatar,
     name: result.name,
     warning: result.warning,
+    warningNotices: result.warningNotices,
   };
 }
 
 // Single post import for the Links page.
 export async function fetchLinkedInPost(url: string, creatorId: string) {
   const ref = linkedinPostRef(url);
-  if (!ref) throw new Error("Paste a LinkedIn post link.");
+  if (!ref) throw userError("linkedin.pastePostLink");
   const embed = await fetchEmbed(ref.type, ref.id);
   const text = embed.text || "";
   // ugcPost/share links name the same post by another id; sync uses the activity id.

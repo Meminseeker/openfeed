@@ -1,3 +1,16 @@
+import type { Notice } from "./notices/index.ts";
+// A failed request. `message` is the server's English text; `notices`, when
+// present, let the UI show it in the chosen language (see errorText).
+export class ApiError extends Error {
+  notices?: Notice[];
+  status: number;
+  constructor(message: string, status: number, notices?: Notice[]) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.notices = notices;
+  }
+}
 let account = "";
 export const activeAccount = () => account;
 export function setActiveAccount(id: string) {
@@ -24,8 +37,12 @@ export async function api(
   )
     window.dispatchEvent(new Event("openfeed:logout"));
   if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(e.error || "Request failed");
+    const e = await r.json().catch(() => ({}));
+    throw new ApiError(
+      typeof e.error === "string" && e.error ? e.error : "Request failed",
+      r.status,
+      Array.isArray(e.notices) && e.notices.length ? e.notices : undefined,
+    );
   }
   return r.json();
 }

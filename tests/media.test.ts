@@ -71,6 +71,10 @@ test("video streaming preserves ranges and HEAD without forwarding browser crede
     assert.equal(await head.text(), "");
     const bad = await fetch(endpoint, { headers: { Range: "bytes=0-1,3-4" } });
     assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), {
+      error: "Invalid video range.",
+      notices: [{ code: "core.invalidVideoRange" }],
+    });
     assert.equal(calls, 2);
   } finally {
     globalThis.fetch = original;

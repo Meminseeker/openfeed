@@ -23,7 +23,7 @@ OpenFeed is a personal feed reader. It follows chosen creators on YouTube, X, In
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run dev`                    | `tsx server/index.ts`. Serves the app on http://localhost:3000 (loopback). Vite HMR uses its own default WebSocket port, 24678, because no `hmr.server` is configured.                                                                                                                                                                                                |
 | `npm start`                      | `NODE_ENV=production tsx …`. This still runs under **tsx**, so it does not reproduce the Docker runtime. To check the real production runtime, run `npm run build && NODE_ENV=production node server/index.ts`, or the production-runtime test.                                                                                                                       |
-| `npm test`                       | `tsx --test tests/*.test.ts`. 115 tests, about 2.5 s, all offline.                                                                                                                                                                                                                                                                                                    |
+| `npm test`                       | `tsx --test tests/*.test.ts`. 126 tests, all offline. About 100 s: one X test waits on SocialData request spacing left over from an earlier test.                                                                                                                                                                                                                     |
 | `npx tsx --test tests/x.test.ts` | Runs a single file. Add `--test-name-pattern="regex"` to filter by test name.                                                                                                                                                                                                                                                                                         |
 | `npm run build`                  | `tsc --noEmit && vite build`. `tsc` type-checks `src`, `server`, `tests` and `vite.config.ts`.                                                                                                                                                                                                                                                                        |
 | `npm run format`                 | Prettier with default settings (no config file): double quotes, semicolons, 2 spaces, trailing commas, 80 columns. **This script reformats `tests/fixtures/x-long-*.html` (there is no `.prettierignore`), and tests depend on those files' exact bytes.** Restore them afterwards with `git checkout tests/fixtures`, or run Prettier only on the files you changed. |
@@ -37,7 +37,7 @@ The production image runs `node server/index.ts` with Node 24 type stripping. Th
 - **Use only erasable syntax.** No `enum`, `namespace`, constructor parameter properties, or `import x = require`. `server/public-page.ts` (`PageError`) shows the pattern: declare the field, then assign it in the constructor.
 - **Relative imports need an explicit `.ts` extension**, e.g. `../src/types.ts`. Frontend files import without extensions (`./types`). Don't copy that style into `server/`.
 - **Type-only imports need `import type`**, or the inline `type` modifier.
-- **The server may import only `src/types.ts` and `src/clean-url.ts` from `src/`.** These are the only `src` files the Dockerfile copies into the runtime image (`COPY src/types.ts src/clean-url.ts ./src/`). To share another file, add it to that line. Keep shared files free of DOM and JSX.
+- **The server may import only `src/types.ts`, `src/clean-url.ts` and `src/notices/*` from `src/`.** These are the only `src` files the Dockerfile copies into the runtime image (`COPY src/types.ts src/clean-url.ts ./src/` and `COPY src/notices ./src/notices`). To share another file, add it there. Keep shared files free of DOM and JSX, and give their relative imports `.ts` extensions too.
 - **No dev dependencies at runtime.** `npm prune --omit=dev` removes tsx, vite and typescript from the image.
 - `tests/production-runtime.test.ts` checks these rules. It boots `server/index.ts` with plain `node`, `NODE_ENV=production` and no tsx, then expects `/healthz` to return 200 and an unauthenticated `/api/state` to return 401.
 
@@ -70,6 +70,8 @@ src/
   AuthGate.tsx     Login/signup/claim gate; renders App once authenticated
   i18n.ts          Pure translation core: Locale, detectLocale, initialLocale, translate (tested)
   locales/         en.ts (source keys) and tr.ts (typed as Messages, so missing keys fail tsc)
+  notices/         SERVER IMPORTS THIS: notice codes + English templates per domain, UserError, errorBody
+  locales/notices-tr/ Turkish notice templates per domain
   LocaleProvider.tsx I18nProvider context (localStorage `openfeed.locale`), useI18n(), LanguageSelect
   api.ts           fetch wrapper (X-OpenFeed-User header, 401 → logout event), writeNotes serializer
   types.ts         Shared models (SERVER IMPORTS THIS)
@@ -156,17 +158,22 @@ The boot sequence:
 
 **Errors:**
 
-- For validation, route handlers usually `throw new Error("user-facing message")`. Express 5 forwards async rejections, and the global handler turns every thrown error into **400 `{error: message}`**, upstream and network failures included.
+- **User-facing messages are notices** (`src/notices/`), so the client can translate them. A notice is `{code, params?}`; codes are `<domain>.<name>` and each domain file (`src/notices/<domain>.ts`) holds the English templates with `{param}` placeholders. Turkish lives in `src/locales/notices-tr/<domain>.ts`, typed so a missing key fails `tsc`; `tests/i18n.test.ts` checks namespacing and placeholders.
+  - Throw `userError("<domain>.<name>", params)` instead of `new Error("…")`. Its `message` is the filled English template, so code and tests that match on `e.message` keep working. Direct responses use `res.status(n).json(noticeBody(code, params))`.
+  - Express 5 forwards async rejections, and the global handler sends **400 `errorBody(err)`** = `{error: englishText, notices?}` for every thrown error, upstream and network failures included. `errorNotices()` also maps fetch timeouts and `fetch failed` to `common.timeout` / `common.network`; other plain `Error`s have no notices and show their English message.
+  - Sync warnings: adapters return `warning` (English) plus `warningNotices`, with `noticesText(warningNotices) === warning`. `setAccountProblem` stores `account.error` + `account.errorNotices`; playlists store `warning` + `warningNotices`. Notices in one message join with a single space.
+  - Upstream text (HTTP statuses, API error strings) goes into params untranslated.
 - Some routes set the status themselves:
   - 409 for a duplicate creator or a sync already in progress.
   - Auth responses of 401, 403 and 429.
   - `res.sendStatus(404)` for an unknown post or creator. This sends plain text with no JSON body.
-- The client reads `body.error` and falls back to "Request failed".
+- `api.ts` throws `ApiError(body.error, status, body.notices)`. UI code shows errors with `describe(e)` from `useI18n()` (translated notices, else the English message, else a generic failure), and stored problems with `accountProblem` / `creatorProblem` / `playlistWarning` from `i18n.ts`; `creatorProblem` rebuilds the server's `creator.error` join per account so each part is translated.
 
 **Auth (`server/auth.ts`):**
 
 - `openfeed_session` cookie: HttpOnly, SameSite=Lax, a fixed 30-day expiry. `secure` is set only when a public origin is configured.
-- Usernames match `^[a-z0-9_.-]{3,40}$` after lowercasing. Passwords are 12–128 characters.
+- Usernames match `^[a-z0-9_.-]{3,40}$` after lowercasing. Passwords are 12–128 characters. Invalid username and invalid password are separate notices.
+- Login deliberately distinguishes `auth.noAccount` (no user with that name; the login form then offers "Create an account with this username", keeping what was typed) from `auth.wrongPassword`. This reveals whether a username exists, which signup's "already in use" reveals anyway; it was chosen because people tried to log in before signing up and could not tell why it failed.
 - Rate limit: 30 non-GET requests per IP per 15 minutes on `/api/auth/*`, then 429. The counter lives in memory.
 - Per-request owner scoping uses `AsyncLocalStorage`. Data helpers call `owner()`, which throws outside a request. **Background code must wrap its work in `asOwner(userId, fn)`.**
 - If the client sends `X-OpenFeed-User` and it differs from the session user, the server returns 409. This catches account switches in another tab.
@@ -386,8 +393,8 @@ There is no registry. The platform list is hardcoded in several places:
   - The locale is detected once from `navigator.languages` (primary subtag) unless a saved choice exists; `I18nProvider` wraps `AuthGate` in `main.tsx` and sets `<html lang>` and `document.title`.
   - Pure helpers take the locale as a trailing optional arg defaulting to `"en"`: `relativeTime(published, now, locale)`, `postLabel(post, locale)`. Date formatting passes `locale` to `toLocaleString`.
   - `contentFilters` in `feed-filters.ts` is a list of keys; labels are `filter.<key>`. The `"All topics"` sentinel stays English in state and is displayed as `t("topics.all")`.
-  - Server messages (`{error}` bodies, `account.error` warnings) are English and shown as-is.
-  - To add a language: add `src/locales/<code>.ts` typed `Messages`, then register it in `dictionaries` and `localeNames` in `i18n.ts`.
+  - Server messages arrive as notices (see **Errors** under the server pipeline) and are translated with `src/locales/notices-<locale>/`. Plain upstream text inside params and messages without notices (old stored rows, unexpected exceptions) stay English.
+  - To add a language: add `src/locales/<code>.ts` typed `Messages` and `src/locales/notices-<code>/` (mirror `notices-tr`), then register them in `dictionaries`, `noticeDictionaries` and `localeNames` in `i18n.ts`.
 - **Styling:**
   - One global `style.css` with short kebab-case semantic class names and state classes such as `.active` and `.read`.
   - Colors are hardcoded hex values (a green and cream palette), with no CSS variables and no dark mode.

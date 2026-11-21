@@ -27,7 +27,7 @@ export function Notes({
   currentTime?: () => number;
   seek?: (seconds: number) => void;
 }) {
-  const { t, locale } = useI18n();
+  const { t, locale, describe } = useI18n();
   const account = useRef(activeAccount()).current;
   const draftKey = useRef(
     `openfeed.notes.${activeAccount()}.${post.id}`,
@@ -66,7 +66,7 @@ export function Notes({
     } catch (e) {
       if (mounted.current) {
         setStatus("unsaved");
-        setError(t("notes.draftKept", { message: (e as Error).message }));
+        setError(t("notes.draftKept", { message: describe(e) }));
       }
     } finally {
       pending.current--;

@@ -13,6 +13,7 @@ import {
   locales,
   localeStorageKey,
   translator,
+  errorText,
   type Locale,
   type Translate,
 } from "./i18n";
@@ -21,11 +22,14 @@ interface I18nValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: Translate;
+  // Text for a caught error, translated when the server sent notices.
+  describe: (error: unknown) => string;
 }
 const I18nContext = createContext<I18nValue>({
   locale: defaultLocale,
   setLocale: () => {},
   t: translator(defaultLocale),
+  describe: (error) => errorText(defaultLocale, error),
 });
 
 function storedLocale() {
@@ -46,6 +50,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     () => ({
       locale,
       t: translator(locale),
+      describe: (error) => errorText(locale, error),
       setLocale: (next) => {
         setLocaleState(next);
         try {

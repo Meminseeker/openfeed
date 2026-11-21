@@ -1,13 +1,19 @@
 import { XMLParser } from "fast-xml-parser";
 import type { Post, Kind } from "../src/types.ts";
+import {
+  notice,
+  noticesText,
+  userError,
+  type Notice,
+  type NoticeCode,
+} from "../src/notices/index.ts";
 const text = (v: any): string =>
   v?.simpleText || v?.runs?.map((r: any) => r.text).join("") || "";
 export function initialData(html: string): any {
   const marker =
     /(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*/g;
   const match = marker.exec(html);
-  if (!match)
-    throw new Error("YouTube page data unavailable. Please retry later.");
+  if (!match) throw userError("youtube.pageDataUnavailable");
   const start = match.index + match[0].length;
   let depth = 0,
     quoted = false,
@@ -25,7 +31,7 @@ export function initialData(html: string): any {
         return JSON.parse(html.slice(start, i + 1));
     }
   }
-  throw new Error("Incomplete YouTube page data.");
+  throw userError("youtube.pageDataIncomplete");
 }
 function walk(value: any, fn: (key: string, value: any) => void) {
   if (!value || typeof value !== "object") return;
@@ -198,7 +204,7 @@ async function get(url: string) {
       "Accept-Language": "en-US,en;q=0.9",
     },
   });
-  if (!r.ok) throw new Error(`YouTube returned ${r.status}. Try again later.`);
+  if (!r.ok) throw userError("youtube.httpStatus", { status: r.status });
   return r.text();
 }
 export function channelPath(input: string) {
@@ -208,9 +214,9 @@ export function channelPath(input: string) {
     if (
       !["youtube.com", "www.youtube.com", "m.youtube.com"].includes(u.hostname)
     )
-      throw new Error("Enter a YouTube channel URL, handle, or channel ID.");
+      throw userError("youtube.invalidChannelInput");
     if (!/^\/(?:@[^/]+|channel\/UC[\w-]{22})(?:\/|$)/.test(u.pathname))
-      throw new Error("Use a channel URL, not a video or playlist URL.");
+      throw userError("youtube.notChannelUrl");
     s = u.pathname
       .replace(/^\//, "")
       .split("/")
@@ -221,7 +227,7 @@ export function channelPath(input: string) {
   if (s.startsWith("channel/") && /^UC[\w-]{22}$/.test(s.slice(8))) return s;
   if (/^@?[\p{L}\p{N}_.-]{3,50}$/u.test(s))
     return s.startsWith("@") ? s : `@${s}`;
-  throw new Error("Enter a YouTube @handle or /channel/ URL.");
+  throw userError("youtube.invalidHandle");
 }
 export async function resolveChannel(input: string) {
   const path = channelPath(input);
@@ -237,8 +243,7 @@ export async function resolveChannel(input: string) {
       avatar = v.avatar?.thumbnails?.at(-1)?.url || "";
     }
   });
-  if (!/^UC[\w-]{22}$/.test(id))
-    throw new Error("Could not find this public YouTube channel.");
+  if (!/^UC[\w-]{22}$/.test(id)) throw userError("youtube.channelNotFound");
   return { id, name, avatar };
 }
 export async function syncChannel(
@@ -247,8 +252,14 @@ export async function syncChannel(
   kinds: Kind[] = ["video", "short", "community"],
 ) {
   const selected = [...new Set(kinds)];
-  if (!selected.length) return { posts: [] as Post[], warning: "" };
-  const warnings: string[] = [];
+  if (!selected.length)
+    return {
+      posts: [] as Post[],
+      warning: "",
+      warningNotices: [] as Notice[],
+    };
+  // Each entry is a warning part; the "…More" variant adds the "; " separator.
+  const warnings: [NoticeCode, NoticeCode][] = [];
   const uploads = new Map<string, Post>();
   if (selected.includes("video") || selected.includes("short")) {
     try {
@@ -276,7 +287,10 @@ export async function syncChannel(
         });
       }
     } catch {
-      warnings.push("Upload feed unavailable");
+      warnings.push([
+        "youtube.uploadFeedUnavailable",
+        "youtube.uploadFeedUnavailableMore",
+      ]);
     }
   }
   const posts = new Map<string, Post>();
@@ -307,7 +321,17 @@ export async function syncChannel(
       }
     } catch {
       warnings.push(
-        `${kind === "short" ? "Shorts" : kind === "video" ? "Videos" : "Community posts"} tab unavailable`,
+        kind === "short"
+          ? ["youtube.shortsTabUnavailable", "youtube.shortsTabUnavailableMore"]
+          : kind === "video"
+            ? [
+                "youtube.videosTabUnavailable",
+                "youtube.videosTabUnavailableMore",
+              ]
+            : [
+                "youtube.communityTabUnavailable",
+                "youtube.communityTabUnavailableMore",
+              ],
       );
     }
   }
@@ -316,5 +340,12 @@ export async function syncChannel(
   if (selected.includes("video") && selected.includes("short")) {
     for (const [id, p] of uploads) if (!posts.has(id)) posts.set(id, p);
   }
-  return { posts: [...posts.values()], warning: warnings.join("; ") };
+  const warningNotices = warnings.map(([last, more], i) =>
+    notice(i === warnings.length - 1 ? last : more),
+  );
+  return {
+    posts: [...posts.values()],
+    warning: noticesText(warningNotices),
+    warningNotices,
+  };
 }

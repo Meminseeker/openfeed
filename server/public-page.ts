@@ -1,10 +1,18 @@
 const redirectStatuses = [301, 302, 303, 307, 308];
 const retryStatuses = [429, 500, 502, 503, 504];
 const youtubeHosts = ["youtube.com", "www.youtube.com", "m.youtube.com"];
-class PageError extends Error {
+import {
+  notice,
+  userError,
+  UserError,
+  type Notice,
+} from "../src/notices/index.ts";
+
+class PageError extends UserError {
   readonly retry: boolean;
-  constructor(message: string, retry: boolean) {
-    super(message);
+  constructor(notices: Notice | Notice[], retry: boolean) {
+    super(notices);
+    this.name = "PageError";
     this.retry = retry;
   }
 }
@@ -35,7 +43,7 @@ export async function fetchPublicPage(input: string) {
           await r.body?.cancel();
           if (!location || hop === 3)
             throw new PageError(
-              `${platform} returned an incomplete or looping redirect. Try again later.`,
+              notice("youtube.pageRedirectLoop", { platform }),
               false,
             );
           const next = new URL(location, url);
@@ -70,7 +78,7 @@ export async function fetchPublicPage(input: string) {
           }
           if (!publicTarget(next) && !consentTarget)
             throw new PageError(
-              `${platform} redirected away from the requested public content. It may require consent or sign-in.`,
+              notice("youtube.pageRedirectedAway", { platform }),
               false,
             );
           url = next;
@@ -79,15 +87,19 @@ export async function fetchPublicPage(input: string) {
         if (!r.ok) {
           await r.body?.cancel();
           throw new PageError(
-            `${platform} returned HTTP ${r.status}. ${r.status === 403 || r.status === 429 ? "It may be blocking or limiting requests from this server." : "Try again later."}`,
+            [
+              notice("youtube.pageHttpStatus", { platform, status: r.status }),
+              notice(
+                r.status === 403 || r.status === 429
+                  ? "youtube.pageMayBeBlocking"
+                  : "youtube.tryAgainLater",
+              ),
+            ],
             retryStatuses.includes(r.status),
           );
         }
         if (url.hostname === "consent.youtube.com")
-          throw new PageError(
-            "YouTube requires an interactive consent choice on this server. The playlist could not be imported automatically.",
-            false,
-          );
+          throw new PageError(notice("youtube.consentRequired"), false);
         // Read within the retry boundary: connections can fail during the body too.
         const body = await r.arrayBuffer();
         return new Response(body, { status: r.status, headers: r.headers });
@@ -97,13 +109,15 @@ export async function fetchPublicPage(input: string) {
       if (attempt === 2) {
         if (error instanceof PageError) throw error;
         const cause = (error as { cause?: { code?: string } })?.cause?.code;
-        const detail = cause && /^[A-Z0-9_]+$/.test(cause) ? ` (${cause})` : "";
-        throw new Error(
-          `Could not connect to ${platform} from the OpenFeed server after 3 attempts${detail}. Check the server's outbound network/DNS access and try again.`,
-        );
+        throw cause && /^[A-Z0-9_]+$/.test(cause)
+          ? userError("youtube.pageConnectFailedCode", {
+              platform,
+              code: cause,
+            })
+          : userError("youtube.pageConnectFailed", { platform });
       }
       await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
     }
   }
-  throw new Error(`${platform} could not be loaded.`);
+  throw userError("youtube.pageLoadFailed", { platform });
 }

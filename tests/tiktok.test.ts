@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { noticesText, type Notice } from "../src/notices/index.ts";
 import { readFileSync } from "node:fs";
 import {
   parseTikTokProfile,
@@ -77,6 +78,21 @@ test("TikTok sync uses normalized profile and reports HTTP failures", async () =
     assert.equal((await syncTikTok("@Dolubatarya", "c")).posts.length, 1);
     globalThis.fetch = async () => new Response("Blocked", { status: 403 });
     await assert.rejects(syncTikTok("dolubatarya", "c"), /HTTP 403/);
+    const error = await syncTikTok("dolubatarya", "c").catch((e) => e);
+    assert.equal(
+      error.message,
+      "TikTok refresh failed: HTTP 403; HTTP 403. Existing posts are kept.",
+    );
+    assert.deepEqual(
+      error.notices.map((n: Notice) => n.code),
+      [
+        "tiktok.refreshFailed",
+        "tiktok.httpStatus",
+        "tiktok.httpStatus",
+        "tiktok.postsKept",
+      ],
+    );
+    assert.equal(noticesText(error.notices), error.message);
   } finally {
     globalThis.fetch = original;
   }
@@ -106,6 +122,8 @@ test("real creator embed imports baby._.vibz's latest video without a video obje
   assert.equal(latest.publishedApproximate, true);
   assert.equal(latest.videoId, "7701241895976013088");
   assert.match(latest.title, /Baby kid/);
+  assert.ok(result.warningNotices.length);
+  assert.equal(noticesText(result.warningNotices), result.warning);
 });
 test("creator embeds reject mismatched/private/error payloads and filter private videos", () => {
   for (const change of [
@@ -157,7 +175,11 @@ test("sync uses the creator embed first and never treats challenges as an empty 
         }),
       );
     };
-    await assert.rejects(syncTikTok("baby._.vibz", "c"), /Private TikTok/);
+    await assert.rejects(syncTikTok("baby._.vibz", "c"), (error: any) => {
+      assert.equal(error.message, "Private TikTok accounts are not supported.");
+      assert.deepEqual(error.notices, [{ code: "tiktok.privateAccount" }]);
+      return true;
+    });
     assert.equal(requests.length, 1);
     globalThis.fetch = async () =>
       new Response('<script id="slardar-config">SlardarWAF</script>');

@@ -7,6 +7,7 @@ import {
   syncXSources,
   xSourceKey,
 } from "../server/x.ts";
+import { noticesText, UserError } from "../src/notices/index.ts";
 const tweet = (id: string, extra: any = {}) => ({
   id_str: id,
   created_at: "Mon Sep 08 09:00:17 +0000 2025",
@@ -597,6 +598,8 @@ test("SocialData never searches further back than the retention window and repor
       const result = results.get(xSourceKey("old", false));
       assert.ok(result instanceof Error);
       assert.match(result.message, /balance is empty/);
+      assert.ok(result instanceof UserError);
+      assert.deepEqual(result.notices, [{ code: "x.socialDataBalance" }]);
     },
   );
 });
@@ -692,6 +695,8 @@ test("when SocialData search fails, accounts not refreshed for 6 hours fall back
       assert.equal(alice.userId, "42");
       assert.equal(alice.newestId, "300");
       assert.match(alice.warning!, /timeline was read instead/);
+      assert.equal(alice.warningNotices?.[0].code, "x.socialDataFallbackUsed");
+      assert.equal(noticesText(alice.warningNotices!), alice.warning);
       const bob = results.get(xSourceKey("bob", false));
       assert.ok(bob && !(bob instanceof Error));
       assert.deepEqual(
@@ -704,6 +709,10 @@ test("when SocialData search fails, accounts not refreshed for 6 hours fall back
         carol.message,
         /at most every 6 hours; next after 15:30 UTC/,
       );
+      assert.ok(carol instanceof UserError);
+      assert.deepEqual(carol.notices, [
+        { code: "x.socialDataFallbackWait", params: { time: "15:30" } },
+      ]);
     },
     "100000",
   );
@@ -744,4 +753,21 @@ test("SocialData timeline fallback is not used for billing or key errors, and re
       );
     },
   );
+});
+
+test("X errors and warnings carry translatable notices with the same English text", () => {
+  assert.throws(
+    () => xUsername("https://example.com/test"),
+    (e: unknown) =>
+      e instanceof UserError &&
+      e.notices[0].code === "x.invalidProfileUrl" &&
+      e.message === "Use an X username or an https://x.com profile URL.",
+  );
+  const result = parseXTimeline(
+    `<script id="__NEXT_DATA__">${JSON.stringify({ props: { pageProps: { timeline: { entries: [] } } } })}</script>`,
+    "test",
+    "c",
+  );
+  assert.deepEqual(result.warningNotices, [{ code: "x.snapshotLimited" }]);
+  assert.equal(noticesText(result.warningNotices!), result.warning);
 });

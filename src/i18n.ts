@@ -1,6 +1,14 @@
-// Pure translation helpers. React wiring lives in I18n.tsx.
+// Pure translation helpers. React wiring lives in LocaleProvider.tsx.
 import { en } from "./locales/en";
 import { tr } from "./locales/tr";
+import { noticesTr } from "./locales/notices-tr/index";
+import {
+  noticeMessages,
+  noticesText,
+  type Notice,
+  type NoticeCode,
+} from "./notices/index";
+import type { Account, Creator, Playlist } from "./types";
 
 // A message is plain text with {name} placeholders, or a plural pair chosen
 // by the `count` parameter through Intl.PluralRules.
@@ -58,6 +66,61 @@ export function translate(
   return text.replace(/\{(\w+)\}/g, (match, name: string) =>
     name in params ? String(params[name]) : match,
   );
+}
+
+// Server notices: English templates come from src/notices, other languages
+// from src/locales/notices-<locale>.
+const noticeDictionaries: Record<Locale, Record<NoticeCode, string>> = {
+  en: noticeMessages,
+  tr: noticesTr,
+};
+export function translateNotices(locale: Locale, notices: readonly Notice[]) {
+  return noticesText(notices, noticeDictionaries[locale]);
+}
+
+// The text of a thrown error: translated notices when the server sent them,
+// otherwise its (English) message, otherwise a generic failure.
+export function errorText(locale: Locale, error: unknown) {
+  const notices = (error as { notices?: Notice[] } | null)?.notices;
+  if (Array.isArray(notices) && notices.length)
+    return translateNotices(locale, notices);
+  const message = error instanceof Error ? error.message : "";
+  return !message || message === "Request failed"
+    ? translateNotices(locale, [{ code: "common.requestFailed" }])
+    : message;
+}
+
+// Stored sync problems. Rows written before notices existed fall back to the
+// English text.
+export function accountProblem(locale: Locale, account: Account) {
+  return account.errorNotices?.length
+    ? translateNotices(locale, account.errorNotices)
+    : account.error;
+}
+export const platformNames: Record<string, string> = {
+  youtube: "YouTube",
+  x: "X",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  patreon: "Patreon",
+  linkedin: "LinkedIn",
+};
+// Mirrors creatorError() in server/index.ts.
+export function creatorProblem(locale: Locale, creator: Creator) {
+  return (
+    creator.accounts
+      .filter((a) => a.error)
+      .map(
+        (a) =>
+          `${platformNames[a.platform] || a.platform}: ${accountProblem(locale, a)}`,
+      )
+      .join(" · ") || creator.error
+  );
+}
+export function playlistWarning(locale: Locale, playlist: Playlist) {
+  return playlist.warningNotices?.length
+    ? translateNotices(locale, playlist.warningNotices)
+    : playlist.warning;
 }
 
 export type Translate = (key: MessageKey, params?: Params) => string;

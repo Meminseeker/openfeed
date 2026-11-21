@@ -1,4 +1,10 @@
 import type { Post, RichBlock, RichSpan } from "../src/types.ts";
+import {
+  notice,
+  noticesText,
+  userError,
+  type Notice,
+} from "../src/notices/index.ts";
 
 // Patreon has no public creator-posts API. This reads the web app's JSON:API
 // endpoints; member-only content requires the owner's browser session cookie.
@@ -32,9 +38,9 @@ export function patreonUsername(input: string) {
       url.password ||
       url.port
     )
-      throw new Error("Use a Patreon username or HTTPS profile URL.");
+      throw userError("patreon.invalidUrl");
     const match = url.pathname.match(/^\/(?:(?:c|cw)\/)?([^/]+)\/?$/);
-    if (!match) throw new Error("Use a Patreon creator URL, not a post URL.");
+    if (!match) throw userError("patreon.postUrl");
     value = match[1];
   }
   value = value.replace(/^@/, "");
@@ -42,7 +48,7 @@ export function patreonUsername(input: string) {
     !/^[a-zA-Z0-9_-]{1,64}$/.test(value) ||
     reserved.includes(value.toLowerCase())
   )
-    throw new Error("Enter a valid Patreon creator username.");
+    throw userError("patreon.invalidUsername");
   return value.toLowerCase();
 }
 
@@ -62,9 +68,7 @@ async function patreonJson(url: string, sessionId = ""): Promise<any> {
     signal: AbortSignal.timeout(20000),
   });
   if (!r.ok || !/json/.test(r.headers.get("content-type") || ""))
-    throw new Error(
-      `Patreon blocked or unavailable (HTTP ${r.status}). Existing posts are kept.`,
-    );
+    throw userError("patreon.blocked", { status: r.status });
   return r.json();
 }
 
@@ -111,7 +115,7 @@ export async function resolvePatreonCampaign(input: string) {
       /^\d+$/.test(String(c.id)) &&
       String(c.attributes?.vanity || "").toLowerCase() === username,
   );
-  if (!campaign) throw new Error("Patreon creator not found.");
+  if (!campaign) throw userError("patreon.notFound");
   return {
     id: String(campaign.id),
     name: String(campaign.attributes.name || username),
@@ -363,16 +367,14 @@ export function patreonImport(
   try {
     data = JSON.parse(body);
   } catch {
-    throw new Error(
-      "The phone sent no Patreon data. Patreon may have blocked the request or the session expired.",
-    );
+    throw userError("patreon.phoneNoData");
   }
   if (!Array.isArray(data?.data))
-    throw new Error(
-      data?.errors?.[0]?.detail
-        ? `Patreon returned an error on the phone: ${String(data.errors[0].detail).slice(0, 100)}.`
-        : "The phone sent an unexpected Patreon response.",
-    );
+    throw data?.errors?.[0]?.detail
+      ? userError("patreon.phoneError", {
+          detail: String(data.errors[0].detail).slice(0, 100),
+        })
+      : userError("patreon.phoneUnexpected");
   const vanity = (Array.isArray(data.included) ? data.included : []).find(
     (i: any) => i?.type === "campaign" && String(i.id) === campaignId,
   )?.attributes?.vanity;
@@ -380,9 +382,11 @@ export function patreonImport(
     typeof vanity === "string" &&
     vanity.toLowerCase() !== username.toLowerCase()
   )
-    throw new Error(
-      `Campaign ${campaignId} belongs to Patreon creator ${vanity.slice(0, 64)}, not ${username}. Check the campaign ID in Phone sync setup.`,
-    );
+    throw userError("patreon.campaignMismatch", {
+      campaignId,
+      vanity: vanity.slice(0, 64),
+      username,
+    });
   const posts = data.data
     .filter(
       (item: any) =>
@@ -390,12 +394,14 @@ export function patreonImport(
     )
     .map((item: any) => patreonPost(item, username, creatorId))
     .filter(Boolean) as Post[];
+  const warningNotices =
+    posts.length && posts.every((p) => p.locked)
+      ? [notice("patreon.phoneAllLocked")]
+      : undefined;
   return {
     posts,
-    warning:
-      posts.length && posts.every((p) => p.locked)
-        ? "Every Patreon post is locked. Update the session_id in the phone shortcut."
-        : undefined,
+    warning: warningNotices ? noticesText(warningNotices) : undefined,
+    warningNotices,
   };
 }
 
@@ -406,8 +412,7 @@ export async function syncPatreon(
   options: { useSession: boolean; since: number },
 ) {
   const username = patreonUsername(input);
-  if (!/^\d+$/.test(campaignId))
-    throw new Error("Patreon campaign could not be resolved.");
+  if (!/^\d+$/.test(campaignId)) throw userError("patreon.campaignUnresolved");
   const sessionId = session(options.useSession);
   const params = new URLSearchParams({
     "filter[campaign_id]": campaignId,
@@ -437,20 +442,17 @@ export async function syncPatreon(
     }
     url = nextPage(data?.links?.next);
   }
-  const warnings: string[] = [];
-  if (!sessionId)
-    warnings.push(
-      "Showing public Patreon previews only; member posts are locked.",
-    );
+  const warnings: Notice[] = [];
+  if (!sessionId) warnings.push(notice("patreon.publicOnly"));
   else if (posts.length && posts.every((p) => p.locked))
-    warnings.push(
-      "Patreon session expired or this membership does not unlock these posts. Update PATREON_SESSION_ID.",
-    );
+    warnings.push(notice("patreon.sessionExpired"));
   if (url && !older)
-    warnings.push(
-      `Only the newest ${pageLimit * pageSize} Patreon posts were checked.`,
-    );
-  return { posts, warning: warnings.join(" ") || undefined };
+    warnings.push(notice("patreon.pageCap", { count: pageLimit * pageSize }));
+  return {
+    posts,
+    warning: warnings.length ? noticesText(warnings) : undefined,
+    warningNotices: warnings.length ? warnings : undefined,
+  };
 }
 
 const postRequests = new Map<string, { until: number; post?: Post }>();
@@ -470,10 +472,9 @@ export async function fetchPatreonPost(post: Post, useSession: boolean) {
       `${api}/posts/${id}?${params}`,
       session(useSession),
     );
-    if (String(data?.data?.id) !== id)
-      throw new Error("Patreon did not return this post.");
+    if (String(data?.data?.id) !== id) throw userError("patreon.postMissing");
     fresh = patreonPost(data.data, post.sourceUsername || "", post.creatorId);
-    if (!fresh) throw new Error("Patreon did not return this post.");
+    if (!fresh) throw userError("patreon.postMissing");
     if (postRequests.size > 500) postRequests.clear();
     postRequests.set(key, { until: Date.now() + 300000, post: fresh });
   }

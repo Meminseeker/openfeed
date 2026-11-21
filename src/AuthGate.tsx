@@ -1,17 +1,20 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { api, setActiveAccount } from "./api";
+import { api, setActiveAccount, ApiError } from "./api";
 import { useI18n, LanguageSelect } from "./LocaleProvider";
 export function AuthGate({
   children,
 }: {
   children: (username: string, logout: () => void) => ReactNode;
 }) {
-  const { t } = useI18n();
+  const { t, describe } = useI18n();
   const [user, setUser] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [signup, setSignup] = useState(false),
     [claim, setClaim] = useState(false),
     [error, setError] = useState(""),
+    // Set when login failed because the username has no account, so the
+    // form can offer to create it.
+    [missingAccount, setMissingAccount] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     api("auth/me")
@@ -20,7 +23,7 @@ export function AuthGate({
         setUser(data.user?.username || null);
         setClaim(data.claimRequired);
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(describe(e)))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
@@ -36,7 +39,7 @@ export function AuthGate({
           setUser(null);
           setClaim(false);
         })
-        .catch((e) => setError(e.message));
+        .catch((e) => setError(describe(e)));
     });
   return (
     <main className="auth-page">
@@ -46,6 +49,7 @@ export function AuthGate({
           e.preventDefault();
           setBusy(true);
           setError("");
+          setMissingAccount(false);
           const form = new FormData(e.currentTarget);
           try {
             const data = await api(
@@ -61,7 +65,12 @@ export function AuthGate({
             setUser(data.user.username);
             setClaim(false);
           } catch (e) {
-            setError((e as Error).message);
+            setError(describe(e));
+            setMissingAccount(
+              !signup &&
+                e instanceof ApiError &&
+                !!e.notices?.some((n) => n.code === "auth.noAccount"),
+            );
           } finally {
             setBusy(false);
           }
@@ -77,6 +86,7 @@ export function AuthGate({
             autoComplete="username"
             required
             pattern="[A-Za-z0-9_.-]{3,40}"
+            title={t("auth.usernameHint")}
             minLength={3}
             maxLength={40}
           />
@@ -110,6 +120,20 @@ export function AuthGate({
             {error}
           </p>
         )}
+        {missingAccount && (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              // Keeps the typed username and password for the signup form.
+              setSignup(true);
+              setError("");
+              setMissingAccount(false);
+            }}
+          >
+            {t("auth.createThisAccount")}
+          </button>
+        )}
         <button className="primary" disabled={busy}>
           {busy
             ? t("auth.wait")
@@ -122,6 +146,7 @@ export function AuthGate({
           onClick={() => {
             setSignup(!signup);
             setError("");
+            setMissingAccount(false);
           }}
         >
           {signup ? t("auth.toLogin") : t("auth.toSignup")}

@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { channelPath, initialData, publicPosts } from "../server/youtube.ts";
+import {
+  channelPath,
+  initialData,
+  publicPosts,
+  syncChannel,
+} from "../server/youtube.ts";
+import { errorNotices, noticesText } from "../src/notices/index.ts";
 test("accepts channel IDs, handles, and YouTube URLs without allowing arbitrary hosts", () => {
   assert.equal(channelPath("@mkbhd"), "@mkbhd");
   assert.equal(channelPath("mkbhd"), "@mkbhd");
@@ -199,4 +205,48 @@ test("imports every album image in order at its best resolution and attached vid
     "community",
   );
   assert.equal(video.videoId, "attached");
+});
+test("channel input errors carry translatable notices with the same English text", () => {
+  assert.throws(
+    () => channelPath("https://youtube.com/watch?v=abc"),
+    (e: unknown) => {
+      assert.ok(e instanceof Error);
+      assert.equal(
+        e.message,
+        "Use a channel URL, not a video or playlist URL.",
+      );
+      assert.deepEqual(errorNotices(e), [{ code: "youtube.notChannelUrl" }]);
+      return true;
+    },
+  );
+});
+test("sync warnings keep the semicolon-joined English and carry matching notices", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/shorts")) return new Response("var ytInitialData = {};");
+    return new Response("", { status: 503 });
+  };
+  try {
+    const result = await syncChannel("UCLRYyGAoqR26MpjAmbrG6oQ", "creator", [
+      "video",
+      "short",
+      "community",
+    ]);
+    assert.equal(
+      result.warning,
+      "Upload feed unavailable; Videos tab unavailable; Community posts tab unavailable",
+    );
+    assert.equal(noticesText(result.warningNotices), result.warning);
+    assert.deepEqual(
+      result.warningNotices.map((n) => n.code),
+      [
+        "youtube.uploadFeedUnavailableMore",
+        "youtube.videosTabUnavailableMore",
+        "youtube.communityTabUnavailable",
+      ],
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
 });

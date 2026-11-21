@@ -9,6 +9,7 @@ import {
 import { promisify } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 import type { Express } from "express";
+import { noticeBody } from "../src/notices/index.ts";
 const derive = promisify(scrypt);
 const context = new AsyncLocalStorage<string>();
 export function asOwner<T>(id: string, work: () => T): T {
@@ -70,9 +71,7 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
       for (const [k, v] of attempts) if (v.until < now) attempts.delete(k);
     const a = attempts.get(key);
     if (a && a.until > now && a.count >= 30) {
-      res
-        .status(429)
-        .json({ error: "Too many attempts. Try again in 15 minutes." });
+      res.status(429).json(noticeBody("auth.tooManyAttempts"));
       return;
     }
     attempts.set(
@@ -107,16 +106,16 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
           .trim()
           .toLowerCase();
         const password = req.body?.password;
+        if (!/^[a-z0-9_.-]{3,40}$/.test(username)) {
+          res.status(400).json(noticeBody("auth.invalidUsername"));
+          return;
+        }
         if (
-          !/^[a-z0-9_.-]{3,40}$/.test(username) ||
           typeof password !== "string" ||
           password.length < 12 ||
           password.length > 128
         ) {
-          res.status(400).json({
-            error:
-              "Use a username of 3–40 letters, numbers, dots, dashes or underscores and a password of 12–128 characters.",
-          });
+          res.status(400).json(noticeBody("auth.invalidPassword"));
           return;
         }
         let user = db
@@ -131,14 +130,11 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
               typeof req.body.setupToken !== "string" ||
               digest(req.body.setupToken) !== digest(setupToken))
           ) {
-            res.status(403).json({
-              error:
-                "The owner must claim the existing workspace using OPENFEED_SETUP_TOKEN before signup opens.",
-            });
+            res.status(403).json(noticeBody("auth.claimRequired"));
             return;
           }
           if (user) {
-            res.status(409).json({ error: "That username is already in use." });
+            res.status(409).json(noticeBody("auth.usernameTaken"));
             return;
           }
           const salt = randomBytes(16).toString("hex");
@@ -166,15 +162,18 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
             throw e;
           }
         } else {
-          const hash = await passwordHash(
-            password,
-            user?.salt || "openfeed-dummy-salt",
-          );
-          if (
-            !user ||
-            !timingSafeEqual(hash, Buffer.from(user.password, "hex"))
-          ) {
-            res.status(401).json({ error: "Incorrect username or password." });
+          // Saying which part was wrong reveals whether a username exists;
+          // signup already reveals that, and people otherwise try to log in
+          // before creating an account without understanding why it fails.
+          if (!user) {
+            res.status(401).json(noticeBody("auth.noAccount", { username }));
+            return;
+          }
+          const hash = await passwordHash(password, user.salt);
+          if (!timingSafeEqual(hash, Buffer.from(user.password, "hex"))) {
+            res
+              .status(401)
+              .json(noticeBody("auth.wrongPassword", { username }));
             return;
           }
         }
@@ -204,9 +203,7 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
       req.headers["x-openfeed-user"] &&
       req.headers["x-openfeed-user"] !== session(req)?.id
     ) {
-      res
-        .status(409)
-        .json({ error: "Your account changed. Reload before logging out." });
+      res.status(409).json(noticeBody("auth.accountChangedLogout"));
       return;
     }
     const token = req.headers.cookie
@@ -228,16 +225,14 @@ export function installAuth(app: Express, db: DatabaseSync, secure: boolean) {
     res.setHeader("Cache-Control", "no-store");
     const user = session(req);
     if (!user) {
-      res.status(401).json({ error: "Please log in." });
+      res.status(401).json(noticeBody("auth.loginRequired"));
       return;
     }
     if (
       req.headers["x-openfeed-user"] &&
       req.headers["x-openfeed-user"] !== user.id
     ) {
-      res
-        .status(409)
-        .json({ error: "Your account changed. Reload before saving." });
+      res.status(409).json(noticeBody("auth.accountChangedSave"));
       return;
     }
     context.run(user.id, next);

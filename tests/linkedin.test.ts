@@ -11,6 +11,7 @@ import {
 import { contentUrl, importLink } from "../server/library.ts";
 import { cleanPastedUrl } from "../src/clean-url.ts";
 import type { Post } from "../src/types.ts";
+import { noticesText, UserError } from "../src/notices/index.ts";
 
 // Synthetic pages modelled on LinkedIn's logged-out markup (no real profile data).
 const CDN = "https://media.licdn.com/dms/image/v2";
@@ -194,6 +195,10 @@ test("LinkedIn profiles yield the owner's own posts with exact dates and the pro
     /^https:\/\/media\.licdn\.com\/.*shrink_200_200/,
   );
   assert.match(result.warning, /about|usually 5/);
+  assert.deepEqual(result.warningNotices, [
+    { code: "linkedin.limitedCoverage" },
+  ]);
+  assert.equal(noticesText(result.warningNotices), result.warning);
 });
 
 test("LinkedIn profiles without posts are empty, while pages without profile data fail", () => {
@@ -338,6 +343,31 @@ test("LinkedIn sync reports refusals and sign-in walls instead of an empty succe
     } finally {
       stub.restore();
     }
+  }
+});
+
+test("LinkedIn errors carry translatable notices with the same English text", async () => {
+  assert.throws(
+    () => linkedinUsername("https://www.linkedin.com/company/acme/"),
+    (e: unknown) =>
+      e instanceof UserError &&
+      e.notices[0].code === "linkedin.personalProfilesOnly" &&
+      e.message ===
+        "Only personal LinkedIn profiles (linkedin.com/in/…) are supported.",
+  );
+  const stub = stubFetch(() => new Response("", { status: 500 }));
+  try {
+    await assert.rejects(
+      syncLinkedIn("ada-example", "c"),
+      (e: unknown) =>
+        e instanceof UserError &&
+        e.notices[0].code === "linkedin.refreshFailed" &&
+        e.notices[0].params?.status === 500 &&
+        e.message ===
+          "LinkedIn refresh failed (HTTP 500). Existing posts are kept.",
+    );
+  } finally {
+    stub.restore();
   }
 });
 

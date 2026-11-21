@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchPublicPage } from "../server/public-page.ts";
+import { errorNotices } from "../src/notices/index.ts";
 import { importPlaylist } from "../server/library.ts";
 import { cleanPastedUrl } from "../src/clean-url.ts";
 test("pasted links retain identifiers and strip sharing parameters and fragments", () => {
@@ -118,6 +119,18 @@ test("network failures get bounded retries and a diagnostic instead of fetch fai
       /YouTube.*3 attempts.*ENOTFOUND/,
     );
     assert.equal(calls, 3);
+    await assert.rejects(
+      fetchPublicPage("https://www.youtube.com/playlist?list=PLtest123456"),
+      (e: unknown) => {
+        assert.deepEqual(errorNotices(e), [
+          {
+            code: "youtube.pageConnectFailedCode",
+            params: { platform: "YouTube", code: "ENOTFOUND" },
+          },
+        ]);
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = original;
   }
@@ -238,6 +251,32 @@ test("consent redirects cannot swap playlists, leak to other hosts or accept an 
       });
     await assert.rejects(fetchPublicPage(url), /redirected away/);
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+test("blocked public pages explain the status in English and as notices", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response("", { status: 403 });
+  try {
+    await assert.rejects(
+      fetchPublicPage("https://www.tiktok.com/@creator/video/1"),
+      (e: unknown) => {
+        assert.ok(e instanceof Error);
+        assert.equal(
+          e.message,
+          "TikTok returned HTTP 403. It may be blocking or limiting requests from this server.",
+        );
+        assert.deepEqual(errorNotices(e), [
+          {
+            code: "youtube.pageHttpStatus",
+            params: { platform: "TikTok", status: 403 },
+          },
+          { code: "youtube.pageMayBeBlocking" },
+        ]);
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = original;
   }

@@ -2,6 +2,7 @@ import type { Request, Response as ExpressResponse } from "express";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Post } from "../src/types.ts";
+import { noticeBody } from "../src/notices/index.ts";
 
 export function xVideoUrl(post: Post | undefined, index: string) {
   if (post?.platform !== "x" || !/^(0|[1-9]\d*)$/.test(index)) return;
@@ -27,7 +28,7 @@ export async function streamXVideo(
 ) {
   const range = req.headers.range;
   if (range && !/^bytes=(?:\d+-\d*|-\d+)$/.test(range)) {
-    res.status(400).json({ error: "Invalid video range." });
+    res.status(400).json(noticeBody("core.invalidVideoRange"));
     return;
   }
   const controller = new AbortController();
@@ -44,9 +45,7 @@ export async function streamXVideo(
     clearTimeout(timeout);
     if (![200, 206, 416].includes(upstream.status)) {
       await upstream.body?.cancel();
-      res
-        .status(502)
-        .json({ error: "X video is unavailable. Try refreshing the source." });
+      res.status(502).json(noticeBody("core.xVideoUnavailable"));
       return;
     }
     if (
@@ -54,7 +53,7 @@ export async function streamXVideo(
       !/^video\//i.test(upstream.headers.get("content-type") || "")
     ) {
       await upstream.body?.cancel();
-      res.status(502).json({ error: "X did not return a video." });
+      res.status(502).json(noticeBody("core.xVideoNotVideo"));
       return;
     }
     res.status(upstream.status);
@@ -72,7 +71,7 @@ export async function streamXVideo(
     else await pipeline(Readable.fromWeb(upstream.body as any), res);
   } catch {
     if (!res.headersSent && !res.destroyed)
-      res.status(502).json({ error: "X video could not be loaded." });
+      res.status(502).json(noticeBody("core.xVideoLoadFailed"));
     else if (!res.destroyed) res.destroy();
   } finally {
     clearTimeout(timeout);

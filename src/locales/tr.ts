@@ -247,6 +247,8 @@ export const tr: Messages = {
   "auth.setupToken": "Çalışma alanı kurulum anahtarı",
   "auth.setupTokenHint":
     "Mevcut çalışma alanını sahiplenmek için sunucu yapılandırmanızdaki OPENFEED_SETUP_TOKEN değerini kullanın.",
+  "auth.usernameHint": "3–40 harf, rakam, nokta, tire veya alt çizgi.",
+  "auth.createThisAccount": "Bu kullanıcı adıyla hesap oluştur",
   "auth.wait": "Lütfen bekleyin…",
   "auth.createAccount": "Hesap oluştur",
   "auth.login": "Giriş yap",

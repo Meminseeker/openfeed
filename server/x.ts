@@ -1,7 +1,13 @@
 import type { Post } from "../src/types.ts";
+import {
+  notice,
+  noticesText,
+  userError,
+  type Notice,
+} from "../src/notices/index.ts";
 
-export const snapshotWarning =
-  "X supplies a limited public snapshot, often with older posts; recent posts and a complete timeline are not guaranteed.";
+const snapshotNotices: Notice[] = [notice("x.snapshotLimited")];
+export const snapshotWarning = noticesText(snapshotNotices);
 export function xUsername(input: string): string {
   let value = input.trim();
   if (/^https?:\/\//i.test(value)) {
@@ -15,7 +21,7 @@ export function xUsername(input: string): string {
       url.password ||
       url.port
     )
-      throw new Error("Use an X username or an https://x.com profile URL.");
+      throw userError("x.invalidProfileUrl");
     value = url.pathname.replace(/^\//, "").replace(/\/$/, "");
   }
   value = value.replace(/^@/, "");
@@ -23,9 +29,7 @@ export function xUsername(input: string): string {
     !/^[a-zA-Z0-9_]{1,15}$/.test(value) ||
     ["home", "search", "explore", "settings", "i"].includes(value.toLowerCase())
   )
-    throw new Error(
-      "Enter a valid X username (up to 15 letters, numbers or underscores).",
-    );
+    throw userError("x.invalidUsername");
   return value;
 }
 function mediaUrl(value: unknown, host: string): string | undefined {
@@ -41,6 +45,13 @@ function mediaUrl(value: unknown, host: string): string | undefined {
       return url.href;
   } catch {}
 }
+// A warning as English text plus the notices it was built from; an empty
+// list clears both.
+function warningFields(notices: Notice[]) {
+  return notices.length
+    ? { warning: noticesText(notices), warningNotices: notices }
+    : { warning: undefined, warningNotices: undefined };
+}
 export function parseXTimeline(
   html: string,
   username: string,
@@ -50,21 +61,15 @@ export function parseXTimeline(
   const match = html.match(
     /<script\b[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
   );
-  if (!match)
-    throw new Error(
-      "X's public timeline is unavailable. Try again later or open the profile on X.",
-    );
+  if (!match) throw userError("x.timelineUnavailable");
   let page: any;
   try {
     page = JSON.parse(match[1]).props.pageProps;
   } catch {
-    throw new Error("X changed its public timeline format.");
+    throw userError("x.timelineFormatChanged");
   }
   const entries = page?.timeline?.entries;
-  if (!Array.isArray(entries))
-    throw new Error(
-      "X did not expose this profile's public posts. Private accounts are not supported.",
-    );
+  if (!Array.isArray(entries)) throw userError("x.timelineHidden");
   const posts = new Map<string, Post>();
   let author: any;
   for (const entry of entries) {
@@ -72,8 +77,7 @@ export function parseXTimeline(
     const t = entry.content?.tweet;
     if (!t || t.user?.screen_name?.toLowerCase() !== username.toLowerCase())
       continue;
-    if (t.user.protected)
-      throw new Error("Private X accounts are not supported.");
+    if (t.user.protected) throw userError("x.privateAccount");
     author = t.user;
     if (t.in_reply_to_status_id_str || t.in_reply_to_status_id) continue;
     const repost = !!(
@@ -159,7 +163,8 @@ export function parseXTimeline(
     posts: [...posts.values()],
     name: author?.name || username,
     avatar: mediaUrl(author?.profile_image_url_https, "pbs.twimg.com") || "",
-    warning: snapshotWarning,
+    warning: snapshotWarning as string | undefined,
+    warningNotices: snapshotNotices as Notice[] | undefined,
   };
 }
 export async function syncX(
@@ -174,7 +179,7 @@ export async function syncX(
       await syncXSources([{ username, sinceId, includeReposts }])
     ).get(xSourceKey(username, includeReposts));
     if (!result || result instanceof Error)
-      throw result || new Error("X refresh failed.");
+      throw result || userError("x.refreshFailed");
     return {
       ...result,
       posts: result.posts.map((p) => ({ ...p, creatorId })),
@@ -196,9 +201,7 @@ export async function syncX(
     },
   );
   if (!response.ok)
-    throw new Error(
-      `X public timeline unavailable (HTTP ${response.status}). Try again later.`,
-    );
+    throw userError("x.publicTimelineHttp", { status: response.status });
   return parseXTimeline(
     await response.text(),
     username,
@@ -220,15 +223,9 @@ async function syncOfficialX(
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(20000),
     });
-    if (!response.ok)
-      throw new Error(
-        `X API request failed (HTTP ${response.status}). Check the bearer token, API access and usage limits.`,
-      );
+    if (!response.ok) throw userError("x.apiHttp", { status: response.status });
     const json = (await response.json()) as any;
-    if (json.errors?.length)
-      throw new Error(
-        "X API returned incomplete data. Check account availability and API access.",
-      );
+    if (json.errors?.length) throw userError("x.apiIncomplete");
     return json;
   }
   const profile = (
@@ -237,14 +234,13 @@ async function syncOfficialX(
     )
   ).data;
   if (!profile?.id || !/^\d+$/.test(profile.id))
-    throw new Error("X account was not found.");
-  if (profile.protected !== false)
-    throw new Error("Private X accounts are not supported.");
+    throw userError("x.accountNotFound");
+  if (profile.protected !== false) throw userError("x.privateAccount");
   const page = await get(
     `users/${profile.id}/tweets?max_results=30&exclude=${includeReposts ? "replies" : "replies,retweets"}&tweet.fields=created_at,author_id,attachments,note_post,entities,referenced_tweets&expansions=attachments.media_keys&media.fields=url,preview_image_url,variants,type${sinceId && /^\d+$/.test(sinceId) ? `&since_id=${sinceId}` : ""}`,
   );
   if (!Array.isArray(page.data) && page.meta?.result_count !== 0)
-    throw new Error("X API did not return a usable timeline.");
+    throw userError("x.apiNoTimeline");
   const media = new Map(
     (page.includes?.media || []).map((m: any) => [m.media_key, m]),
   );
@@ -305,9 +301,7 @@ async function syncOfficialX(
     ...result,
     name: profile.name || username,
     avatar: mediaUrl(profile.profile_image_url, "pbs.twimg.com") || "",
-    warning: page.meta?.next_token
-      ? "X refresh is limited to 30 new posts/reposts. Older excess items were skipped to keep costs and volume down."
-      : undefined,
+    ...warningFields(page.meta?.next_token ? [notice("x.apiLimited")] : []),
   };
 }
 
@@ -326,8 +320,12 @@ export type XSource = {
   // Cached numeric X user id, needed only by the timeline fallback.
   userId?: string;
 };
-export type XSyncResult = Omit<ReturnType<typeof parseXTimeline>, "warning"> & {
+export type XSyncResult = Omit<
+  ReturnType<typeof parseXTimeline>,
+  "warning" | "warningNotices"
+> & {
   warning?: string;
+  warningNotices?: Notice[];
   newestId?: string;
   userId?: string;
 };
@@ -366,17 +364,12 @@ async function socialData(path: string, spaced = true): Promise<any> {
     redirect: "error",
   });
   if (response.status === 404) return null;
-  if (response.status === 402)
-    throw new Error(
-      "SocialData balance is empty. Top up at socialdata.tools to refresh X.",
-    );
+  if (response.status === 402) throw userError("x.socialDataBalance");
   if (response.status === 401 || response.status === 403)
-    throw new Error("SocialData rejected the API key (SOCIALDATA_API_KEY).");
+    throw userError("x.socialDataKey");
   if (!response.ok)
     throw Object.assign(
-      new Error(
-        `SocialData request failed (HTTP ${response.status}). Try again later.`,
-      ),
+      userError("x.socialDataHttp", { status: response.status }),
       { status: response.status },
     );
   return response.json();
@@ -452,9 +445,7 @@ function socialDataResult(
       p.textTruncated ? p : { ...p, textExpanded: true, textVersion: 2 },
     ),
     newestId,
-    warning: complete
-      ? undefined
-      : "More new X posts arrived than one refresh reads; the oldest were skipped.",
+    ...warningFields(complete ? [] : [notice("x.socialDataSkipped")]),
   };
 }
 
@@ -468,19 +459,17 @@ async function socialDataFallback(
   if (!socialDataOutage(searchError)) return searchError as Error;
   const last = Date.parse(source.checkedAt || "");
   if (Number.isFinite(last) && now - last < socialDataFallbackMs)
-    return new Error(
-      `SocialData search is failing. The account timeline is used instead at most every 6 hours; next after ${new Date(last + socialDataFallbackMs).toISOString().slice(11, 16)} UTC.`,
-    );
+    return userError("x.socialDataFallbackWait", {
+      time: new Date(last + socialDataFallbackMs).toISOString().slice(11, 16),
+    });
   try {
     let userId = source.userId;
     if (!userId || !/^\d+$/.test(userId)) {
       const user = await socialData(`/twitter/user/${source.username}`, false);
-      if (!user) throw new Error("X account was not found.");
-      if (user.protected)
-        throw new Error("Private X accounts are not supported.");
+      if (!user) throw userError("x.accountNotFound");
+      if (user.protected) throw userError("x.privateAccount");
       userId = String(user.id_str || "");
-      if (!/^\d+$/.test(userId))
-        throw new Error("SocialData did not return this X account's id.");
+      if (!/^\d+$/.test(userId)) throw userError("x.socialDataNoUserId");
     }
     const since =
       source.sinceId && /^\d+$/.test(source.sinceId)
@@ -515,7 +504,10 @@ async function socialDataFallback(
     return {
       ...result,
       userId,
-      warning: `SocialData search is failing, so this account's timeline was read instead (at most every 6 hours).${result.warning ? ` ${result.warning}` : ""}`,
+      ...warningFields([
+        notice("x.socialDataFallbackUsed"),
+        ...(result.warningNotices || []),
+      ]),
     };
   } catch (error) {
     return error as Error;
@@ -570,9 +562,8 @@ export async function syncXSources(
       );
       if (!tweets.length) {
         const user = await socialData(`/twitter/user/${source.username}`);
-        if (!user) throw new Error("X account was not found.");
-        if (user.protected)
-          throw new Error("Private X accounts are not supported.");
+        if (!user) throw userError("x.accountNotFound");
+        if (user.protected) throw userError("x.privateAccount");
       }
       results.set(key, socialDataResult(tweets, source, true));
     } catch (error) {
@@ -709,13 +700,13 @@ export async function expandXPost(post: Post) {
 // Public fallback: validate the exact status ID; never send cookies or credentials.
 export async function fetchXStatus(url: string): Promise<any> {
   const id = new URL(url).pathname.match(/\/status\/(\d+)$/)?.[1];
-  if (!id) throw new Error("Invalid X post URL.");
+  if (!id) throw userError("x.invalidPostUrl");
   const r = await fetch(`https://api.fxtwitter.com/status/${id}`, {
     headers: { "User-Agent": "OpenFeed/1.0 (public post reader)" },
     signal: AbortSignal.timeout(15000),
     redirect: "error",
   });
-  if (!r.ok) throw new Error("X post unavailable. Please try again later.");
+  if (!r.ok) throw userError("x.postUnavailable");
   const data = (await r.json()) as any;
   if (
     data.code !== 200 ||
@@ -723,6 +714,6 @@ export async function fetchXStatus(url: string): Promise<any> {
     typeof data.tweet.text !== "string" ||
     data.tweet.author?.protected
   )
-    throw new Error("X did not return this public post.");
+    throw userError("x.postNotReturned");
   return data.tweet;
 }

@@ -46,6 +46,7 @@ import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
 import { enabledTypes, sourceTypes } from "./types";
 import { api } from "./api";
 import { useI18n, LanguageSelect, I18nProvider } from "./LocaleProvider";
+import { accountProblem, creatorProblem } from "./i18n";
 import { PhoneSync } from "./PhoneSync";
 import { ContentViewer } from "./ContentViewer";
 import { LinkActions } from "./LinkActions";
@@ -57,7 +58,7 @@ import "@fontsource/manrope/800.css";
 import "./style.css";
 type PageName = "feed" | "creators" | "saved" | "noted" | "playlists" | "links";
 function App({ username, logout }: { username: string; logout: () => void }) {
-  const { t, locale } = useI18n();
+  const { t, locale, describe } = useI18n();
   const [, tick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => tick((n) => n + 1), 60000);
@@ -88,7 +89,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
       setState(await api("state"));
       setError("");
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     } finally {
       setLoading(false);
     }
@@ -113,7 +114,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
     try {
       setState(await api("sync", "POST"));
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     } finally {
       setBusy(false);
     }
@@ -128,7 +129,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         posts: s.posts.map((x) => (x.id === p.id ? updated : x)),
       }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     }
   };
   const followed = state.creators.filter((c) => !c.libraryOnly);
@@ -160,7 +161,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
       setRemovedPost(post);
       setViewerIds([]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     }
   };
   const feedSelection = {
@@ -453,7 +454,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       ))}
                     </div>
                     <small>
-                      {c.error ||
+                      {creatorProblem(locale, c) ||
                         (c.lastSync
                           ? t("creators.updated", {
                               date: new Date(c.lastSync).toLocaleString(locale),
@@ -560,7 +561,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                         setRemovedPost(null);
                         await load();
                       } catch (e) {
-                        setError((e as Error).message);
+                        setError(describe(e));
                       }
                     }}
                   >
@@ -680,7 +681,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
                       });
                       await load();
                     } catch (e) {
-                      setError((e as Error).message);
+                      setError(describe(e));
                     }
                   }}
                 >
@@ -1011,7 +1012,11 @@ function CreatorModal({
   close: () => void;
   done: () => Promise<void>;
 }) {
-  const { t } = useI18n();
+  const { t, locale, describe } = useI18n();
+  const problem = (platform: string) => {
+    const account = accounts.find((a) => a.platform === platform);
+    return account && accountProblem(locale, account);
+  };
   const dialogRef = useRef<HTMLElement>(null);
   const [name, setName] = useState(creator?.name || ""),
     [channel, setChannel] = useState(""),
@@ -1077,7 +1082,7 @@ function CreatorModal({
       });
       await done();
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     } finally {
       setBusy(false);
     }
@@ -1222,10 +1227,7 @@ function CreatorModal({
                   )
                 }
               />
-              <small>
-                {accounts.find((a) => a.platform === "youtube")?.error ||
-                  t("modal.youtubeHint")}
-              </small>
+              <small>{problem("youtube") || t("modal.youtubeHint")}</small>
             </div>
           )}
           <div className="source-settings">
@@ -1272,10 +1274,7 @@ function CreatorModal({
                 }
               />
             )}
-            <small>
-              {accounts.find((a) => a.platform === "x")?.error ||
-                t("modal.xHint")}
-            </small>
+            <small>{problem("x") || t("modal.xHint")}</small>
           </div>
           <div className="source-settings">
             <div className="source-heading">
@@ -1322,10 +1321,7 @@ function CreatorModal({
                 }
               />
             )}
-            <small>
-              {accounts.find((a) => a.platform === "instagram")?.error ||
-                t("modal.instagramHint")}
-            </small>
+            <small>{problem("instagram") || t("modal.instagramHint")}</small>
           </div>
           <details>
             <summary>
@@ -1361,7 +1357,7 @@ function CreatorModal({
                         change={(syncTypes) => update({ syncTypes })}
                       />
                       <small>
-                        {account.error ||
+                        {accountProblem(locale, account) ||
                           (platform === "tiktok"
                             ? t("modal.tiktokHint")
                             : platform === "linkedin"
@@ -1400,7 +1396,7 @@ function CreatorModal({
                     await api(`creators/${creator.id}`, "DELETE");
                     await done();
                   } catch (e) {
-                    setError((e as Error).message);
+                    setError(describe(e));
                     setBusy(false);
                   }
                 }}

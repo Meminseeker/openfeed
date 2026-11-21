@@ -9,6 +9,7 @@ import { useState, useEffect, type ReactNode } from "react";
 import type { State, Post } from "./types";
 import { api } from "./api";
 import { useI18n } from "./LocaleProvider";
+import { playlistWarning } from "./i18n";
 export function LibraryView({
   page,
   state,
@@ -22,7 +23,7 @@ export function LibraryView({
   open: (p: Post, items: Post[]) => void;
   render: (p: Post, open: () => void) => ReactNode;
 }) {
-  const { t } = useI18n();
+  const { t, locale, describe } = useI18n();
   const [selected, setSelected] = useState<string | null>(null),
     [url, setUrl] = useState(""),
     [busy, setBusy] = useState(false),
@@ -60,7 +61,7 @@ export function LibraryView({
       if (page === "playlists")
         setSelected(new URL(input).searchParams.get("list"));
     } catch (e) {
-      setError((e as Error).message);
+      setError(describe(e));
     } finally {
       setBusy(false);
     }
@@ -162,7 +163,7 @@ export function LibraryView({
                 );
                 setSelected(null);
               } catch (e) {
-                setError((e as Error).message);
+                setError(describe(e));
               }
             }}
           >
@@ -171,7 +172,7 @@ export function LibraryView({
         </div>
       )}
       {page === "playlists" && playlist?.warning && (
-        <p className="warning">{playlist.warning}</p>
+        <p className="warning">{playlistWarning(locale, playlist)}</p>
       )}
       <ContentOptions
         unreadCount={sourceItems.filter((p) => !p.read).length}

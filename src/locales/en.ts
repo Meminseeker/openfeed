@@ -242,6 +242,8 @@ export const en = {
   "auth.setupToken": "Workspace setup token",
   "auth.setupTokenHint":
     "Use OPENFEED_SETUP_TOKEN from your server configuration to claim the existing workspace.",
+  "auth.usernameHint": "3–40 letters, numbers, dots, dashes or underscores.",
+  "auth.createThisAccount": "Create an account with this username",
   "auth.wait": "Please wait…",
   "auth.createAccount": "Create account",
   "auth.login": "Log in",

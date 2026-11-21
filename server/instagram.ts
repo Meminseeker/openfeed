@@ -1,5 +1,13 @@
 import type { Post, SyncType } from "../src/types.ts";
+import { notice, noticesText, userError } from "../src/notices/index.ts";
+import type { Notice } from "../src/notices/index.ts";
 
+// A sync warning as English text plus the notices it was built from.
+function warningPair(warningNotices: Notice[]) {
+  return warningNotices.length
+    ? { warning: noticesText(warningNotices), warningNotices }
+    : { warning: undefined, warningNotices: undefined };
+}
 export function instagramUsername(input: string) {
   let value = input.trim();
   if (/^https?:\/\//i.test(value)) {
@@ -11,7 +19,7 @@ export function instagramUsername(input: string) {
       url.password ||
       url.port
     )
-      throw new Error("Use an Instagram username or HTTPS profile URL.");
+      throw userError("instagram.invalidProfileUrl");
     value = url.pathname.replace(/^\//, "").replace(/\/$/, "");
   }
   value = value.replace(/^@/, "");
@@ -22,9 +30,7 @@ export function instagramUsername(input: string) {
       value.toLowerCase(),
     )
   )
-    throw new Error(
-      "Enter a valid Instagram profile username (up to 30 characters).",
-    );
+    throw userError("instagram.invalidUsername");
   return value.toLowerCase();
 }
 function mediaUrl(value: unknown) {
@@ -240,22 +246,15 @@ export function parseInstagramProfile(
   selected: SyncType[],
 ) {
   const { user, media } = pageProfile(html, username);
-  if (!user)
-    throw new Error(
-      "Instagram did not expose public posts. The profile may be private, have embeds disabled, or require sign-in. No authenticated access is attempted.",
-    );
-  if (user.is_private)
-    throw new Error("Private Instagram accounts are not supported.");
+  if (!user) throw userError("instagram.noPublicPosts");
+  if (user.is_private) throw userError("instagram.privateAccount");
   if (!media.length && !Array.isArray(user.edge_owner_to_timeline_media?.edges))
-    throw new Error(
-      "Instagram's public profile embed did not expose any posts.",
-    );
+    throw userError("instagram.embedNoPosts");
   return {
     posts: instagramPosts(media, username, creatorId, selected),
     media,
     avatar: mediaUrl(user.profile_pic_url_hd || user.profile_pic_url) || "",
-    warning:
-      "Instagram profile embeds expose only a small recent preview (usually 6 posts); a complete timeline is not guaranteed.",
+    ...warningPair([notice("instagram.embedPreviewOnly")]),
   };
 }
 export async function syncInstagram(
@@ -264,19 +263,21 @@ export async function syncInstagram(
   selected: SyncType[],
 ) {
   const username = instagramUsername(input);
-  if (!selected.length) return { posts: [], avatar: "", warning: undefined };
+  if (!selected.length)
+    return {
+      posts: [],
+      avatar: "",
+      warning: undefined,
+      warningNotices: undefined,
+    };
   const token = process.env.INSTAGRAM_ACCESS_TOKEN,
     userId = process.env.INSTAGRAM_USER_ID;
   if (token || userId) {
     if (!token || !userId || !/^\d+$/.test(userId))
-      throw new Error(
-        "Set both INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID for Meta Business Discovery.",
-      );
+      throw userError("instagram.apiCredentialsMissing");
     const version = process.env.INSTAGRAM_GRAPH_VERSION;
     if (!version || !/^v\d+\.0$/.test(version))
-      throw new Error(
-        "Set INSTAGRAM_GRAPH_VERSION to the Graph API version configured for your Meta app (for example v24.0).",
-      );
+      throw userError("instagram.apiVersionMissing");
     const fields = `business_discovery.username(${username}){username,profile_picture_url,media.limit(30){id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,children{id,media_type,media_url,thumbnail_url}}}`;
     const response = await fetch(
       `https://graph.facebook.com/${version}/${userId}?fields=${encodeURIComponent(fields)}`,
@@ -286,9 +287,7 @@ export async function syncInstagram(
       },
     );
     if (!response.ok)
-      throw new Error(
-        `Instagram API unavailable (HTTP ${response.status}). Check Meta permissions, token and public professional account eligibility.`,
-      );
+      throw userError("instagram.apiUnavailable", { status: response.status });
     const data = (await response.json()) as any;
     const discovery = data.business_discovery;
     if (
@@ -296,9 +295,7 @@ export async function syncInstagram(
       discovery?.username?.toLowerCase() !== username ||
       !Array.isArray(discovery.media?.data)
     )
-      throw new Error(
-        "Meta did not return this account's public posts. Only eligible public Business/Creator accounts are supported.",
-      );
+      throw userError("instagram.apiNoPosts");
     return {
       posts: instagramPosts(
         discovery.media.data,
@@ -307,9 +304,9 @@ export async function syncInstagram(
         selected,
       ),
       avatar: mediaUrl(discovery.profile_picture_url) || "",
-      warning: discovery.media.paging?.next
-        ? "Instagram imports the latest 30 items only; there is no archive backfill."
-        : undefined,
+      ...warningPair(
+        discovery.media.paging?.next ? [notice("instagram.apiLatestOnly")] : [],
+      ),
     };
   }
   const response = await fetch(`https://www.instagram.com/${username}/embed/`, {
@@ -317,9 +314,9 @@ export async function syncInstagram(
     signal: AbortSignal.timeout(20000),
   });
   if (!response.ok)
-    throw new Error(
-      `Instagram public profile unavailable (HTTP ${response.status}).`,
-    );
+    throw userError("instagram.profileUnavailable", {
+      status: response.status,
+    });
   const result = parseInstagramProfile(
     await response.text(),
     username,
@@ -366,11 +363,10 @@ export async function syncInstagram(
   return {
     ...result,
     posts: instagramPosts(result.media, username, creatorId, selected),
-    warning:
-      result.warning +
-      (detailFailed
-        ? " Some video details were unavailable; use Open source."
-        : ""),
+    ...warningPair([
+      ...(result.warningNotices || []),
+      ...(detailFailed ? [notice("instagram.videoDetailsUnavailable")] : []),
+    ]),
   };
 }
 
@@ -432,7 +428,9 @@ export async function refreshInstagramMedia(
       },
     );
     if (!response.ok)
-      throw new Error(`Instagram post unavailable (HTTP ${response.status}).`);
+      throw userError("instagram.postUnavailable", {
+        status: response.status,
+      });
     const html = await response.text();
     const media = pagePost(html, shortcode);
     if (media) {
@@ -450,7 +448,7 @@ export async function refreshInstagramMedia(
         };
     }
     const image = embeddedImage(html);
-    if (!image) throw new Error("Instagram did not expose this post's media.");
+    if (!image) throw userError("instagram.postMediaMissing");
     return {
       image,
       images: [image, ...(post.images || []).slice(1)],

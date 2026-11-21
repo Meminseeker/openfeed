@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { errorNotices, noticesText } from "../src/notices/index.ts";
 import {
   instagramUsername,
   instagramPosts,
@@ -87,6 +88,14 @@ test("Instagram rejects private or blocked pages and ignores unsafe media and so
     () => parseInstagramProfile(html(true), "test", "c", ["post"]),
     /Private/,
   );
+  assert.throws(
+    () => parseInstagramProfile(html(true), "test", "c", ["post"]),
+    (e) =>
+      errorNotices(e)?.[0]?.code === "instagram.privateAccount" &&
+      (e as Error).message === "Private Instagram accounts are not supported.",
+  );
+  const preview = parseInstagramProfile(html(), "test", "c", ["post"]);
+  assert.equal(noticesText(preview.warningNotices!), preview.warning);
   assert.throws(
     () => parseInstagramProfile("Login", "test", "c", ["post"]),
     /did not expose/,
@@ -183,6 +192,12 @@ test("Meta Business Discovery uses server-only auth, bounded media, and validate
     );
     globalThis.fetch = async () => new Response("", { status: 401 });
     await assert.rejects(syncInstagram("test", "c", ["post"]), /401/);
+    await assert.rejects(syncInstagram("test", "c", ["post"]), (e) => {
+      assert.deepEqual(errorNotices(e), [
+        { code: "instagram.apiUnavailable", params: { status: 401 } },
+      ]);
+      return true;
+    });
   } finally {
     globalThis.fetch = original;
     keys.forEach((key, i) =>
@@ -283,6 +298,7 @@ test("anonymous Instagram sync uses embeds, enriches video/Reels and respects pa
   try {
     const result = await syncInstagram("test", "c", ["short"]);
     assert.equal(result.posts[0].kind, "short");
+    assert.equal(noticesText(result.warningNotices!), result.warning);
     assert.equal(result.posts[0].videos?.[0].url, video);
     assert.equal(
       result.posts[0].published,
@@ -335,9 +351,16 @@ test("collaboration details enrich only a listed public shortcode and retain the
     assert.equal(result.posts[0].videos?.[0].url, video);
     assert.equal(result.posts[0].sourceUsername, "test");
     detail = { ...detail, shortcode: "unrelated" };
+    const partial = await syncInstagram("test", "c", ["video"]);
+    assert.equal(partial.posts[0].videos?.length, 0);
     assert.equal(
-      (await syncInstagram("test", "c", ["video"])).posts[0].videos?.length,
-      0,
+      partial.warning,
+      "Instagram profile embeds expose only a small recent preview (usually 6 posts); a complete timeline is not guaranteed. Some video details were unavailable; use Open source.",
+    );
+    assert.equal(noticesText(partial.warningNotices!), partial.warning);
+    assert.deepEqual(
+      partial.warningNotices?.map((n) => n.code),
+      ["instagram.embedPreviewOnly", "instagram.videoDetailsUnavailable"],
     );
     detail = {
       ...detail,

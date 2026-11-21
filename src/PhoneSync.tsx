@@ -45,7 +45,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
 // Setup values for the iOS Shortcut that fetches Patreon on the phone and
 // uploads the raw page to OpenFeed.
 export function PhoneSync({ username }: { username: string }) {
-  const { t, locale } = useI18n();
+  const { t, locale, describe } = useI18n();
   const [info, setInfo] = useState<PhoneSyncInfo>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -58,7 +58,7 @@ export function PhoneSync({ username }: { username: string }) {
       // The token is returned only once; keep it visible after later updates.
       setInfo((prev) => ({ ...next, token: next.token ?? prev?.token }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("phone.loadError"));
+      setError(e instanceof Error ? describe(e) : t("phone.loadError"));
     } finally {
       setBusy(false);
     }

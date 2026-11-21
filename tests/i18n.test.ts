@@ -13,7 +13,17 @@ import { en } from "../src/locales/en.ts";
 import { tr } from "../src/locales/tr.ts";
 import { relativeTime } from "../src/relative-time.ts";
 import { postLabel } from "../src/post-label.ts";
-import type { Post } from "../src/types.ts";
+import type { Creator, Post } from "../src/types.ts";
+import { accountProblem, creatorProblem, errorText } from "../src/i18n.ts";
+import {
+  noticeDomains,
+  noticeMessages,
+  UserError,
+  errorNotices,
+  notice,
+} from "../src/notices/index.ts";
+import { noticesTr } from "../src/locales/notices-tr/index.ts";
+import { ApiError } from "../src/api.ts";
 
 test("the first supported browser language wins, otherwise English", () => {
   assert.equal(detectLocale(["tr-TR", "en-US"]), "tr");
@@ -95,4 +105,69 @@ test("relative times and post labels follow the chosen language", () => {
     postLabel({ platform: "x", kind: "post", repost: true } as Post),
     "X Repost",
   );
+});
+
+test("server notice codes are namespaced, unique and translated with the same placeholders", () => {
+  const seen = new Set<string>();
+  for (const [domain, templates] of Object.entries(noticeDomains))
+    for (const code of Object.keys(templates)) {
+      assert.ok(code.startsWith(`${domain}.`), code);
+      assert.ok(!seen.has(code), `duplicate ${code}`);
+      seen.add(code);
+    }
+  assert.deepEqual(Object.keys(noticesTr).sort(), [...seen].sort());
+  for (const [code, english] of Object.entries(noticeMessages)) {
+    const turkish = noticesTr[code as keyof typeof noticesTr];
+    assert.ok(turkish.trim(), `tr:${code} is empty`);
+    assert.deepEqual(placeholders(turkish), placeholders(english), code);
+  }
+});
+
+test("errors and stored problems show translated notices, else their English text", () => {
+  const missing = new ApiError("There is no account…", 401, [
+    notice("auth.noAccount", { username: "ada" }),
+  ]);
+  assert.match(
+    errorText("tr", missing),
+    /“ada” kullanıcı adıyla bir hesap yok/,
+  );
+  assert.match(errorText("en", missing), /no account with the username “ada”/);
+  assert.equal(
+    errorText("tr", new Error("Upstream said no")),
+    "Upstream said no",
+  );
+  assert.equal(
+    errorText("tr", new ApiError("Request failed", 404)),
+    "İstek başarısız oldu",
+  );
+  assert.deepEqual(errorNotices(new UserError(notice("auth.loginRequired"))), [
+    { code: "auth.loginRequired" },
+  ]);
+  const timeout = new Error("aborted");
+  timeout.name = "TimeoutError";
+  assert.deepEqual(errorNotices(timeout), [{ code: "common.timeout" }]);
+
+  const creator = {
+    error:
+      "X: legacy text · TikTok: Could not reach the source. Try again later.",
+    accounts: [
+      { platform: "x", username: "a", error: "legacy text" },
+      {
+        platform: "tiktok",
+        username: "b",
+        error: "Could not reach the source. Try again later.",
+        errorNotices: [notice("common.network")],
+      },
+      { platform: "youtube", username: "c" },
+    ],
+  } as Creator;
+  assert.equal(
+    accountProblem("tr", creator.accounts[1]),
+    "Kaynağa ulaşılamadı. Daha sonra tekrar deneyin.",
+  );
+  assert.equal(
+    creatorProblem("tr", creator),
+    "X: legacy text · TikTok: Kaynağa ulaşılamadı. Daha sonra tekrar deneyin.",
+  );
+  assert.equal(creatorProblem("en", creator), creator.error);
 });

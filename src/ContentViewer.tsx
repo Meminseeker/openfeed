@@ -48,7 +48,7 @@ export function ContentViewer({
   onSave: () => void;
   onRemove: () => void;
 }) {
-  const { t, locale } = useI18n();
+  const { t, locale, describe } = useI18n();
   const dialog = useRef<HTMLElement>(null),
     host = useRef<HTMLDivElement>(null),
     native = useRef<HTMLVideoElement>(null),
@@ -237,7 +237,7 @@ export function ContentViewer({
         });
       })
       .catch((e) => {
-        if (!cancelled) setError((e as Error).message);
+        if (!cancelled) setError(describe(e));
       });
     return () => {
       cancelled = true;

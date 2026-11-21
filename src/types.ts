@@ -1,3 +1,5 @@
+import type { Notice } from "./notices/index.ts";
+export type { Notice };
 export type Kind = "video" | "short" | "community" | "post";
 export type SyncType = Kind | "repost";
 export const sourceTypes: Record<string, SyncType[]> = {
@@ -26,7 +28,10 @@ export interface Account {
   // Numeric X user id, cached by the SocialData timeline fallback.
   xUserId?: string;
   lastSync?: string;
+  // English text of the last sync problem; errorNotices lets the client
+  // translate it. Older rows have only `error`.
   error?: string;
+  errorNotices?: Notice[];
 }
 export interface Creator {
   libraryOnly?: boolean;
@@ -95,4 +100,5 @@ export interface Playlist {
   url: string;
   postIds: string[];
   warning?: string;
+  warningNotices?: Notice[];
 }

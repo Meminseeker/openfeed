@@ -12,6 +12,7 @@ import {
   syncPatreon,
 } from "../server/patreon.ts";
 import type { Post } from "../src/types.ts";
+import { noticesText, UserError } from "../src/notices/index.ts";
 
 const media =
   "https://c10.patreonusercontent.com/4/patreon-media/p/post/1/a.png";
@@ -326,6 +327,7 @@ test("Patreon sync sends the session only when allowed, pages until the retentio
     });
     assert.ok(expired.posts.every((p) => p.locked));
     assert.match(expired.warning!, /session expired/);
+    assert.equal(noticesText(expired.warningNotices!), expired.warning);
   } finally {
     globalThis.fetch = original;
     if (previous === undefined) delete process.env.PATREON_SESSION_ID;
@@ -352,6 +354,11 @@ test("Patreon sync stops at the page cap, ignores foreign next links and rejects
     });
     assert.equal(calls, 10);
     assert.match(capped.warning!, /newest 200/);
+    assert.deepEqual(capped.warningNotices, [
+      { code: "patreon.publicOnly" },
+      { code: "patreon.pageCap", params: { count: 200 } },
+    ]);
+    assert.equal(noticesText(capped.warningNotices!), capped.warning);
 
     calls = 0;
     globalThis.fetch = (async () => {
@@ -372,6 +379,13 @@ test("Patreon sync stops at the page cap, ignores foreign next links and rejects
     await assert.rejects(
       syncPatreon("y", "1", "c", { useSession: false, since: 0 }),
       /blocked or unavailable \(HTTP 403\)/,
+    );
+    await assert.rejects(
+      syncPatreon("y", "1", "c", { useSession: false, since: 0 }),
+      (e: unknown) =>
+        e instanceof UserError &&
+        e.notices[0].code === "patreon.blocked" &&
+        e.notices[0].params?.status === 403,
     );
     globalThis.fetch = (async () =>
       new Response("<html></html>", {
@@ -475,6 +489,19 @@ test("Patreon phone imports accept only the campaign's posts and explain bad upl
         "c",
       ),
     /error on the phone: Forbidden/,
+  );
+  assert.throws(
+    () =>
+      patreonImport(
+        JSON.stringify({ errors: [{ detail: "Forbidden" }] }),
+        "1",
+        "y",
+        "c",
+      ),
+    (e: unknown) =>
+      e instanceof UserError &&
+      e.notices[0].code === "patreon.phoneError" &&
+      e.notices[0].params?.detail === "Forbidden",
   );
   assert.throws(
     () =>

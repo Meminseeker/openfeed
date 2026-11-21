@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { noticesText } from "../src/notices/index.ts";
 test("accounts isolate all content paths, library imports survive retention, sessions revoke", async () => {
   const dir = mkdtempSync(join(tmpdir(), "openfeed-accounts-")),
     path = join(dir, "db.sqlite");
@@ -137,6 +138,10 @@ test("accounts isolate all content paths, library imports survive retention, ses
         404,
         path,
       );
+    assert.deepEqual(
+      await (await request("/api/posts/x:123", b.cookie, "DELETE")).json(),
+      { error: "Not Found", notices: [{ code: "core.notFound" }] },
+    );
     for (const user of [a, b])
       await call("creators", user.cookie, "POST", {
         platform: "patreon",
@@ -272,6 +277,14 @@ test("accounts isolate all content paths, library imports survive retention, ses
     });
     assert.equal(blockedCreator.accounts[0].campaignId, undefined);
     assert.match(blockedCreator.error, /Enter the campaign ID/);
+    // The stored warning carries a translatable notice with the same English.
+    assert.deepEqual(blockedCreator.accounts[0].errorNotices, [
+      { code: "core.patreonCampaignHelp" },
+    ]);
+    assert.equal(
+      noticesText(blockedCreator.accounts[0].errorNotices),
+      blockedCreator.accounts[0].error,
+    );
     let blockedInfo = (
       await call("patreon/phone-sync", b.cookie)
     ).creators.find((x: any) => x.username === "blockedcreator");
@@ -292,6 +305,18 @@ test("accounts isolate all content paths, library imports survive retention, ses
         400,
         campaignId,
       );
+    assert.deepEqual(
+      await (
+        await request("/api/patreon/campaign", b.cookie, "PUT", {
+          username: "blockedcreator",
+          campaignId: "abc",
+        })
+      ).json(),
+      {
+        error: "Enter the numeric Patreon campaign ID.",
+        notices: [{ code: "core.enterCampaignId" }],
+      },
+    );
     blockedInfo = (
       await call("patreon/campaign", b.cookie, "PUT", {
         username: "BlockedCreator",
@@ -304,6 +329,12 @@ test("accounts isolate all content paths, library imports survive retention, ses
       !(await call("state", b.cookie)).creators
         .find((x: any) => x.id === blockedCreator.id)
         .error?.includes("Enter the campaign ID"),
+    );
+    assert.equal(
+      (await call("state", b.cookie)).creators.find(
+        (x: any) => x.id === blockedCreator.id,
+      ).accounts[0].errorNotices,
+      undefined,
     );
     const vanityPage = (vanity: string) =>
       JSON.stringify({

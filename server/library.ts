@@ -7,6 +7,16 @@ import { pagePost, instagramPosts } from "./instagram.ts";
 import { syncTikTok } from "./tiktok.ts";
 import { fetchLinkedInPost, linkedinPostRef } from "./linkedin.ts";
 import type { Post, Playlist } from "../src/types.ts";
+import { notice, noticesText, userError } from "../src/notices/index.ts";
+import type { Notice } from "../src/notices/index.ts";
+// URL parsing errors reach the user, so they carry a notice.
+function parseUrl(value: string, base?: URL | string) {
+  try {
+    return new URL(value, base);
+  } catch {
+    throw userError("library.invalidUrl");
+  }
+}
 const text = (v: any): string =>
   v?.simpleText || v?.runs?.map((r: any) => r.text).join("") || "";
 function walk(v: any, fn: (k: string, v: any) => void) {
@@ -17,11 +27,9 @@ function walk(v: any, fn: (k: string, v: any) => void) {
   }
 }
 export function contentUrl(input: string) {
-  const u = new URL(input.trim());
+  const u = parseUrl(input.trim());
   if (u.protocol !== "https:" || u.port || u.username || u.password)
-    throw new Error(
-      "Paste an HTTPS link from YouTube, X, Instagram, TikTok or LinkedIn.",
-    );
+    throw userError("library.httpsLinkRequired");
   const host = u.hostname.replace(/^www\./, "").replace(/^m\./, "");
   if (host === "youtube.com" || host === "youtu.be") {
     const community =
@@ -40,9 +48,7 @@ export function contentUrl(input: string) {
         : u.searchParams.get("v") ||
           u.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]+)\/?$/)?.[1];
     if (!id || !/^[\w-]{11}$/.test(id))
-      throw new Error(
-        "Paste a YouTube video link. Use Playlists for playlist links.",
-      );
+      throw userError("library.youtubeVideoLinkRequired");
     return {
       platform: "youtube" as const,
       id,
@@ -82,12 +88,10 @@ export function contentUrl(input: string) {
     const ref = linkedinPostRef(u.href);
     if (ref) return { platform: "linkedin" as const, id: ref.id, url: ref.url };
   }
-  throw new Error(
-    "Use a public YouTube video, X post, Instagram post/Reel, TikTok video, or LinkedIn post link.",
-  );
+  throw userError("library.unsupportedLink");
 }
 export async function resolveSharedUrl(input: string) {
-  let url = new URL(cleanPastedUrl(input));
+  let url = parseUrl(cleanPastedUrl(input));
   // Only platform-owned shorteners may redirect, and every hop is validated.
   if (
     ["vm.tiktok.com", "vt.tiktok.com"].includes(url.hostname) ||
@@ -102,7 +106,7 @@ export async function resolveSharedUrl(input: string) {
         url.password ||
         !(url.hostname === "tiktok.com" || url.hostname.endsWith(".tiktok.com"))
       )
-        throw new Error("Invalid TikTok redirect.");
+        throw userError("library.invalidTikTokRedirect");
       const r = await fetch(url, {
         redirect: "manual",
         signal: AbortSignal.timeout(15000),
@@ -110,7 +114,7 @@ export async function resolveSharedUrl(input: string) {
       if (![301, 302, 303, 307, 308].includes(r.status)) break;
       const location = r.headers.get("location");
       if (!location) break;
-      url = new URL(cleanPastedUrl(new URL(location, url).href));
+      url = parseUrl(cleanPastedUrl(parseUrl(location, url).href));
     }
   }
   return contentUrl(url.href);
@@ -137,7 +141,7 @@ export async function importLink(
       const post = publicPosts(data, base.creatorId, "community").find(
         (p) => p.id === link.id,
       );
-      if (!post) throw new Error("YouTube did not expose this community post.");
+      if (!post) throw userError("library.youtubeCommunityUnavailable");
       let name = "YouTube";
       walk(data, (key, value) => {
         if (key === "backstagePostRenderer" && value.postId === link.id)
@@ -208,17 +212,14 @@ export async function importLink(
   if (link.platform === "instagram") {
     const html = await (await page(`${link.url}embed/captioned/`)).text();
     const media = pagePost(html, link.id);
-    if (!media)
-      throw new Error(
-        "Instagram did not expose this public post. Private or login-only content cannot be imported.",
-      );
+    if (!media) throw userError("library.instagramNotExposed");
     const name = media.owner?.username || "Instagram";
     const post = instagramPosts([media], name.toLowerCase(), base.creatorId, [
       "post",
       "short",
       "video",
     ])[0];
-    if (!post) throw new Error("Instagram content unavailable.");
+    if (!post) throw userError("library.instagramUnavailable");
     return { name, post: { ...post, libraryOnly: true } };
   }
   if (link.platform === "linkedin")
@@ -240,9 +241,7 @@ export async function importLink(
     typeof data.html !== "string" ||
     !data.html.includes(`data-video-id="${link.id}"`)
   )
-    throw new Error(
-      "TikTok did not expose this video. It may be unavailable or require login.",
-    );
+    throw userError("library.tiktokNotExposed");
   return {
     name: data.author_name || link.username!,
     post: {
@@ -257,7 +256,7 @@ export async function importLink(
   };
 }
 export function playlistId(input: string) {
-  const u = new URL(input.trim());
+  const u = parseUrl(input.trim());
   const id = u.searchParams.get("list");
   if (
     u.protocol !== "https:" ||
@@ -268,7 +267,7 @@ export function playlistId(input: string) {
     !id ||
     !/^[\w-]{10,100}$/.test(id)
   )
-    throw new Error("Paste a public YouTube playlist link.");
+    throw userError("library.playlistLinkRequired");
   return id;
 }
 export function playlistPage(data: any, creatorId: string) {
@@ -332,7 +331,7 @@ export async function importPlaylist(
       hl: "en",
     },
   };
-  let warning: string | undefined;
+  const warningNotices: Notice[] = [];
   for (let n = 0; batch.continuation && n < 20; n++) {
     try {
       const r = await fetch("https://www.youtube.com/youtubei/v1/browse", {
@@ -346,31 +345,33 @@ export async function importPlaylist(
       batch = playlistPage(await r.json(), `playlist:${id}`);
       for (const p of batch.posts) collected.set(p.id, p);
     } catch {
-      warning =
-        "Some playlist pages could not load. Refresh this playlist to retry.";
+      warningNotices.push(notice("library.playlistPagesFailed"));
       break;
     }
   }
-  if (batch.continuation && !warning)
-    warning =
-      "Only the first 21 pages were imported. This playlist exceeds the import limit.";
-  if (!collected.size)
-    throw new Error(
-      "No playable videos found. Use a public or unlisted YouTube playlist.",
-    );
+  if (batch.continuation && !warningNotices.length)
+    warningNotices.push(notice("library.playlistPageLimit"));
+  if (!collected.size) throw userError("library.playlistEmpty");
   const missingDates = await resolveVideoDates(
     [...collected.values()],
     existing,
   );
   if (missingDates)
-    warning = [
-      warning,
-      `Exact publication dates unavailable for ${missingDates} videos; their chronological order may be approximate. Refresh to retry.`,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    warningNotices.push(
+      notice("library.playlistDatesMissing", { count: missingDates }),
+    );
+  const warning = warningNotices.length
+    ? noticesText(warningNotices)
+    : undefined;
   return {
-    playlist: { id, title, url, postIds: [...collected.keys()], warning },
+    playlist: {
+      id,
+      title,
+      url,
+      postIds: [...collected.keys()],
+      warning,
+      ...(warningNotices.length ? { warningNotices } : {}),
+    },
     posts: [...collected.values()],
   };
 }

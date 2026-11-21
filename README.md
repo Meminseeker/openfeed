@@ -104,9 +104,11 @@ The app has individual signup/login accounts. Each account owns its creators, po
 
 The interface is available in English and Turkish (Türkçe). On the first visit OpenFeed uses the first browser language it supports (for example `tr-TR` selects Turkish); any other browser language falls back to English. Change the language with the **Language** selector in the sidebar or at the bottom of the login form. The choice is saved in this browser (`localStorage`, key `openfeed.locale`), so it applies before you log in and is not synced to other devices. Dates, relative times, playback-error text and the YouTube player's own controls follow the chosen language.
 
-Some text stays in English: messages produced by the server (validation errors, sync warnings and source errors shown on creators), creator names, topics and post content, and the offline page.
+Messages from the server (sign-in and validation errors, sync warnings and source errors shown on creators, playlist warnings) are translated too. Some text stays in English: details quoted from another service inside such a message (for example an upstream API's own error text), unexpected internal errors, warnings stored before this change until the source next syncs, creator names, topics and post content, and the offline page.
 
-To add a language, copy `src/locales/en.ts` to a new file, translate every value (keep the `{placeholder}` names), and register it in `dictionaries` and `localeNames` in `src/i18n.ts`. `tests/i18n.test.ts` fails if a key or placeholder is missing.
+When a login fails because no account has that username, OpenFeed says so and offers to create an account with it; a wrong password for an existing account has its own message.
+
+To add a language, copy `src/locales/en.ts` and the `src/locales/notices-tr/` folder (server messages; English templates are in `src/notices/`), translate every value (keep the `{placeholder}` names), and register them in `dictionaries`, `noticeDictionaries` and `localeNames` in `src/i18n.ts`. `tests/i18n.test.ts` fails if a key or placeholder is missing.
 
 ## Structure
 

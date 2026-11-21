@@ -35,14 +35,24 @@ import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolveChannel, syncChannel } from "./youtube.ts";
-import type { Creator, Post, Kind } from "../src/types.ts";
+import type { Account, Creator, Post, Kind } from "../src/types.ts";
+import {
+  describeProblem,
+  errorBody,
+  notice,
+  noticeBody,
+  noticeMessages,
+  UserError,
+  userError,
+  type Notice,
+} from "../src/notices/index.ts";
 import { enabledTypes, sourceTypes } from "../src/types.ts";
 function validSyncTypes(platform: string, value: unknown) {
   if (
     !Array.isArray(value) ||
     !value.every((v) => sourceTypes[platform]?.includes(v))
   )
-    throw new Error("Invalid content types for this source.");
+    throw userError("core.invalidSyncTypes");
   return [...new Set(value)];
 }
 const usernames: Record<string, (input: string) => string> = {
@@ -71,8 +81,12 @@ function sameUsername(platform: string, a: string, b: string) {
   };
   return normalize(a) === normalize(b);
 }
-const campaignHelp =
-  "Patreon blocked the server's creator lookup. Enter the campaign ID in Phone sync setup.";
+const campaignHelp = () => [notice("core.patreonCampaignHelp")];
+// Rows saved before notices have only the English text.
+const campaignHelpText = noticeMessages["core.patreonCampaignHelp"];
+const isCampaignHelp = (a: Account) =>
+  a.errorNotices?.length === 1 &&
+  a.errorNotices[0].code === "core.patreonCampaignHelp";
 // A missing creator is an input error; a blocked lookup must not prevent
 // saving, because phone sync works without the server reaching Patreon.
 async function lookupCampaign(username: string) {
@@ -80,7 +94,7 @@ async function lookupCampaign(username: string) {
     return { campaign: await resolvePatreonCampaign(username) };
   } catch (e) {
     if (e instanceof Error && /not found/.test(e.message)) throw e;
-    return { error: campaignHelp };
+    return { problem: campaignHelp() };
   }
 }
 const databasePath = process.env.OPENFEED_DB || "data/openfeed.db";
@@ -137,7 +151,7 @@ const publicOrigin = validatePublicOrigin(process.env.OPENFEED_PUBLIC_ORIGIN);
 if (publicOrigin) app.set("trust proxy", 1);
 app.use((req, res, next) => {
   if (!requestAllowed(req.headers.host, req.headers.origin, publicOrigin)) {
-    res.status(403).json({ error: "Host or origin is not allowed." });
+    res.status(403).json(noticeBody("core.hostNotAllowed"));
     return;
   }
   next();
@@ -168,7 +182,7 @@ app.post(
       : undefined;
     res.set("Cache-Control", "no-store");
     if (!row) {
-      res.status(401).json({ error: "Invalid phone sync token." });
+      res.status(401).json(noticeBody("core.invalidPhoneSyncToken"));
       return;
     }
     asOwner(String(row.user_id), () => {
@@ -182,9 +196,7 @@ app.post(
         (a) => a.platform === "patreon" && a.campaignId === campaignId,
       );
       if (!creator || !source || !/^\d+$/.test(campaignId)) {
-        res.status(404).json({
-          error: "No followed Patreon creator matches this campaign.",
-        });
+        res.status(404).json(noticeBody("core.noPatreonCampaignMatch"));
         return;
       }
       const now = new Date().toISOString();
@@ -198,10 +210,12 @@ app.post(
           creator.id,
         );
       } catch (e) {
-        source.error = e instanceof Error ? e.message : "Import failed";
+        const problem =
+          e instanceof Error && e.message ? e : [notice("core.importFailed")];
+        setAccountProblem(source, problem);
         creator.error = creatorError(creator);
         saveCreator(creator);
-        res.status(400).json({ error: source.error });
+        res.status(400).json(errorBody(problem));
         return;
       }
       const since = Date.now() - retention * 86400000;
@@ -220,7 +234,7 @@ app.post(
           else added++;
         }
       source.lastSync = now;
-      source.error = result.warning;
+      setAccountProblem(source, resultProblem(result));
       creator.lastSync = now;
       creator.error = creatorError(creator);
       saveCreator(creator);
@@ -399,9 +413,10 @@ app.post("/api/creators", async (req, res, next) => {
         ),
       )
     ) {
-      res.status(409).json({ error: "You already follow this account." });
+      res.status(409).json(noticeBody("core.alreadyFollowing"));
       return;
     }
+    const lookupProblem = describeProblem(lookup?.problem);
     const c: Creator = {
       id: randomUUID(),
       name: channel?.name || campaign?.name || username,
@@ -413,10 +428,11 @@ app.post("/api/creators", async (req, res, next) => {
           username,
           channelId: channel?.id,
           campaignId: campaign?.id,
-          error: lookup?.error,
+          error: lookupProblem.text,
+          errorNotices: lookupProblem.notices,
         },
       ],
-      error: lookup?.error ? `Patreon: ${lookup.error}` : undefined,
+      error: lookupProblem.text ? `Patreon: ${lookupProblem.text}` : undefined,
     };
     saveCreator(c);
     res.json(c);
@@ -427,7 +443,7 @@ app.post("/api/creators", async (req, res, next) => {
 app.patch("/api/creators/:id", async (req, res) => {
   const c = creators().find((c) => c.id === req.params.id);
   if (!c) {
-    res.sendStatus(404);
+    res.status(404).json(noticeBody("core.notFound"));
     return;
   }
   if (typeof req.body.name === "string" && req.body.name.trim())
@@ -467,9 +483,7 @@ app.patch("/api/creators/:id", async (req, res) => {
             other.accounts.some((a) => a.channelId === resolved.id),
         )
       )
-        throw new Error(
-          "You already follow this YouTube account under another creator.",
-        );
+        throw userError("core.alreadyFollowingYoutubeElsewhere");
       youtube.push({
         platform: "youtube",
         username: newYoutube.username,
@@ -500,9 +514,7 @@ app.patch("/api/creators/:id", async (req, res) => {
             ),
         )
       )
-        throw new Error(
-          "You already follow this account under another creator.",
-        );
+        throw userError("core.alreadyFollowingElsewhere");
     }
     const other = req.body.accounts
       .filter(
@@ -532,7 +544,7 @@ app.patch("/api/creators/:id", async (req, res) => {
       if (account.platform === "patreon" && !account.campaignId) {
         const lookup = await lookupCampaign(account.username);
         account.campaignId = lookup.campaign?.id;
-        account.error = lookup.error;
+        setAccountProblem(account, lookup.problem);
       }
       const previous = c.accounts.find(
         (a) =>
@@ -575,6 +587,24 @@ app.delete("/api/creators/:id", (req, res) => {
   );
   res.json({ ok: true });
 });
+// Adapters return `warning` (English) and, when translatable,
+// `warningNotices` whose noticesText() equals that warning.
+function resultProblem(result: object) {
+  return "warningNotices" in result &&
+    Array.isArray(result.warningNotices) &&
+    result.warningNotices.length
+    ? (result.warningNotices as Notice[])
+    : "warning" in result
+      ? result.warning
+      : undefined;
+}
+// Stores a sync warning or error as English text plus translatable notices.
+// `problem` is a string, a Notice[] or an Error; empty clears both.
+function setAccountProblem(a: Account, problem: unknown) {
+  const { text, notices } = describeProblem(problem);
+  a.error = text || undefined;
+  a.errorNotices = text ? notices : undefined;
+}
 function creatorError(c: Creator) {
   return (
     c.accounts
@@ -654,8 +684,7 @@ function lookupUrl(username: string) {
 app.put("/api/patreon/campaign", (req, res) => {
   const username = String(req.body.username || "");
   const campaignId = String(req.body.campaignId || "").trim();
-  if (!/^\d{1,20}$/.test(campaignId))
-    throw new Error("Enter the numeric Patreon campaign ID.");
+  if (!/^\d{1,20}$/.test(campaignId)) throw userError("core.enterCampaignId");
   const all = creators();
   const creator = all.find((c) =>
     c.accounts.some(
@@ -669,7 +698,7 @@ app.put("/api/patreon/campaign", (req, res) => {
       a.platform === "patreon" && sameUsername("patreon", a.username, username),
   );
   if (!creator || !account) {
-    res.status(404).json({ error: "Save this Patreon account first." });
+    res.status(404).json(noticeBody("core.savePatreonFirst"));
     return;
   }
   if (
@@ -682,9 +711,10 @@ app.put("/api/patreon/campaign", (req, res) => {
       ),
     )
   )
-    throw new Error("Another Patreon account already uses this campaign ID.");
+    throw userError("core.campaignIdInUse");
   account.campaignId = campaignId;
-  if (account.error === campaignHelp) account.error = undefined;
+  if (isCampaignHelp(account) || account.error === campaignHelpText)
+    setAccountProblem(account, undefined);
   creator.error = creatorError(creator);
   saveCreator(creator);
   res.json(phoneSyncInfo(req));
@@ -739,7 +769,7 @@ async function syncContents() {
         xSourceKey(account.username, includeReposts),
       );
       if (!result || result instanceof Error)
-        throw result || new Error("X refresh failed.");
+        throw result || userError("core.xRefreshFailed");
       return {
         ...result,
         posts: result.posts.map((p) => ({ ...p, creatorId })),
@@ -763,7 +793,7 @@ async function syncContents() {
           let campaignId = account.campaignId;
           if (account.platform === "patreon" && !campaignId) {
             const lookup = await lookupCampaign(account.username);
-            if (!lookup.campaign) throw new Error(lookup.error);
+            if (!lookup.campaign) throw new UserError(lookup.problem!);
             campaignId = lookup.campaign.id;
           }
           const result =
@@ -845,7 +875,7 @@ async function syncContents() {
             source.xUserId = result.userId;
           if (campaignId) source.campaignId = campaignId;
           source.lastSync = new Date().toISOString();
-          source.error = result.warning || undefined;
+          setAccountProblem(source, resultProblem(result));
           if (!current.avatar && "avatar" in result)
             current.avatar = String(result.avatar || "");
           // LinkedIn slugs are often unreadable; replace the default name once.
@@ -863,7 +893,10 @@ async function syncContents() {
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (current && source) {
-            source.error = e instanceof Error ? e.message : "Sync failed";
+            setAccountProblem(
+              source,
+              e instanceof Error && e.message ? e : [notice("core.syncFailed")],
+            );
             current.error = creatorError(current);
             saveCreator(current);
           }
@@ -877,7 +910,7 @@ async function syncContents() {
 }
 app.post("/api/sync", async (_, res) => {
   if (syncing.has(owner())) {
-    res.status(409).json({ error: "A refresh is already in progress." });
+    res.status(409).json(noticeBody("core.refreshInProgress"));
     return;
   }
   await syncContents();
@@ -915,7 +948,7 @@ app.get("/api/posts/:id/video/:index", async (req, res) => {
     req.params.index,
   );
   if (!url) {
-    res.status(404).json({ error: "Video not found." });
+    res.status(404).json(noticeBody("core.videoNotFound"));
     return;
   }
   await streamXVideo(req, res, url);
@@ -923,7 +956,7 @@ app.get("/api/posts/:id/video/:index", async (req, res) => {
 app.get("/api/posts/:id/detail", async (req, res) => {
   const post = posts().find((p) => p.id === req.params.id && !p.removed);
   if (!post) {
-    res.sendStatus(404);
+    res.status(404).json(noticeBody("core.notFound"));
     return;
   }
   if (post.platform === "patreon") {
@@ -939,7 +972,7 @@ app.get("/api/posts/:id/detail", async (req, res) => {
     const fresh = await fetchPatreonPost(post, patreonSessionAllowed());
     const current = posts().find((p) => p.id === post.id);
     if (!current || current.removed) {
-      res.sendStatus(404);
+      res.status(404).json(noticeBody("core.notFound"));
       return;
     }
     const updated: Post = {
@@ -960,7 +993,7 @@ app.get("/api/posts/:id/detail", async (req, res) => {
     const fresh = await refreshInstagramMedia(post);
     const current = posts().find((p) => p.id === post.id);
     if (!current || current.removed) {
-      res.sendStatus(404);
+      res.status(404).json(noticeBody("core.notFound"));
       return;
     }
     if (!fresh) {
@@ -975,7 +1008,7 @@ app.get("/api/posts/:id/detail", async (req, res) => {
   const expanded = await expandXPost(post);
   const current = posts().find((p) => p.id === post.id);
   if (!current || current.removed) {
-    res.sendStatus(404);
+    res.status(404).json(noticeBody("core.notFound"));
     return;
   }
   const updated = {
@@ -992,7 +1025,7 @@ app.get("/api/posts/:id/detail", async (req, res) => {
 app.delete("/api/posts/:id", (req, res) => {
   const post = posts().find((p) => p.id === req.params.id);
   if (!post) {
-    res.sendStatus(404);
+    res.status(404).json(noticeBody("core.notFound"));
     return;
   }
   savePost({ ...post, removed: true });
@@ -1001,7 +1034,7 @@ app.delete("/api/posts/:id", (req, res) => {
 app.patch("/api/posts/:id", (req, res) => {
   const p = posts().find((p) => p.id === req.params.id);
   if (!p) {
-    res.sendStatus(404);
+    res.status(404).json(noticeBody("core.notFound"));
     return;
   }
   if (typeof req.body.removed === "boolean") p.removed = req.body.removed;
@@ -1009,9 +1042,7 @@ app.patch("/api/posts/:id", (req, res) => {
   if (typeof req.body.saved === "boolean") p.saved = req.body.saved;
   if (req.body.notes !== undefined) {
     if (typeof req.body.notes !== "string" || req.body.notes.length > 50000) {
-      res
-        .status(400)
-        .json({ error: "Notes must be text of at most 50,000 characters." });
+      res.status(400).json(noticeBody("core.notesTooLong"));
       return;
     }
     p.notes = req.body.notes;
@@ -1025,10 +1056,10 @@ app.post("/api/read", (req, res) => {
   res.json({ ok: true });
 });
 app.use("/api", (_, res) =>
-  res.status(404).json({ error: "Endpoint not found" }),
+  res.status(404).json(noticeBody("core.endpointNotFound")),
 );
 app.use((err: any, _req: any, res: any, _next: any) =>
-  res.status(400).json({ error: err.message || "Request failed" }),
+  res.status(400).json(errorBody(err)),
 );
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(resolve("dist")));

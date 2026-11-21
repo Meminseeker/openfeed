@@ -1,4 +1,11 @@
 import type { Post } from "../src/types.ts";
+import {
+  notice,
+  noticesText,
+  UserError,
+  userError,
+  type Notice,
+} from "../src/notices/index.ts";
 
 export function tiktokUsername(input: string) {
   let value = input.trim();
@@ -11,14 +18,13 @@ export function tiktokUsername(input: string) {
       url.password ||
       url.port
     )
-      throw new Error("Use a TikTok username or HTTPS profile URL.");
-    if (!/^\/@[^/]+\/?$/.test(url.pathname))
-      throw new Error("Use a TikTok profile URL, not a video URL.");
+      throw userError("tiktok.invalidUrl");
+    if (!/^\/@[^/]+\/?$/.test(url.pathname)) throw userError("tiktok.videoUrl");
     value = url.pathname.slice(1).replace(/\/$/, "");
   }
   value = value.replace(/^@/, "");
   if (!/^[a-zA-Z0-9_][a-zA-Z0-9_.]{0,23}$/.test(value) || value.endsWith("."))
-    throw new Error("Enter a valid TikTok username (up to 24 characters).");
+    throw userError("tiktok.invalidUsername");
   return value.toLowerCase();
 }
 
@@ -76,14 +82,12 @@ export function parseTikTokProfile(
       walk(JSON.parse(match[1]));
     } catch {}
   }
-  if (!posts.size)
-    throw new Error(
-      "TikTok did not expose public videos. The profile may be empty, private, or blocked by TikTok. Try refreshing later; existing posts are kept.",
-    );
+  if (!posts.size) throw userError("tiktok.profileNoVideos", { end: "" });
+  const warningNotices = [notice("tiktok.profileCoverage")];
   return {
     posts: [...posts.values()],
-    warning:
-      "TikTok imports the recent videos exposed by its public profile; a complete timeline is not guaranteed.",
+    warning: noticesText(warningNotices),
+    warningNotices,
   };
 }
 
@@ -127,7 +131,7 @@ export function parseTikTokEmbed(
     entry.userInfo?.uniqueId?.toLowerCase() !== username ||
     !Array.isArray(entry.videoList)
   )
-    throw new Error("TikTok creator embed did not return a public video list.");
+    throw userError("tiktok.embedNoList", { end: "" });
   const posts = new Map<string, Post>();
   for (const item of entry.videoList) {
     if (
@@ -171,24 +175,42 @@ export function parseTikTokEmbed(
     });
   }
   if (entry.videoList.length && !posts.size)
-    throw new Error(
-      "TikTok creator embed contained no usable public videos for this account.",
-    );
+    throw userError("tiktok.embedNoUsable", { end: "" });
+  const warningNotices = [notice("tiktok.embedCoverage")];
   return {
     posts: [...posts.values()],
-    warning:
-      "TikTok creator embeds expose up to 10 recent videos; dates are estimated from video IDs.",
+    warning: noticesText(warningNotices),
+    warningNotices,
   };
 }
-class PrivateTikTokProfile extends Error {
+class PrivateTikTokProfile extends UserError {
   constructor() {
-    super("Private TikTok accounts are not supported.");
+    super(notice("tiktok.privateAccount"));
   }
+}
+
+// One failure inside "TikTok refresh failed: …". Its last notice gets the
+// separator through {end}, so the English stays "a; b. Existing posts…".
+function failureNotices(error: unknown): Notice[] {
+  if (error instanceof UserError && error.notices.length) {
+    const last = error.notices[error.notices.length - 1];
+    if (last.params && "end" in last.params)
+      return error.notices.map((n) => ({
+        ...n,
+        params: n.params ? { ...n.params } : undefined,
+      }));
+  }
+  return [
+    notice("tiktok.requestFailure", {
+      message: error instanceof Error ? error.message : "Request failed",
+      end: "",
+    }),
+  ];
 }
 
 export async function syncTikTok(input: string, creatorId: string) {
   const username = tiktokUsername(input);
-  const failures: string[] = [];
+  const failures: Notice[][] = [];
   for (const [path, parse] of [
     [`/embed/@${username}`, parseTikTokEmbed],
     [`/@${username}`, parseTikTokProfile],
@@ -198,17 +220,30 @@ export async function syncTikTok(input: string, creatorId: string) {
         headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(20000),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok)
+        throw userError("tiktok.httpStatus", {
+          status: response.status,
+          end: "",
+        });
       const html = await response.text();
       if (/SlardarWAF|overload-protect triggered/.test(html))
-        throw new Error("TikTok blocked the request");
+        throw userError("tiktok.blocked", { end: "" });
       return parse(html, username, creatorId);
     } catch (error) {
       if (error instanceof PrivateTikTokProfile) throw error;
-      failures.push(error instanceof Error ? error.message : "Request failed");
+      failures.push(failureNotices(error));
     }
   }
-  throw new Error(
-    `TikTok refresh failed: ${failures.join("; ")}. Existing posts are kept.`,
-  );
+  failures.forEach((failure, index) => {
+    const last = failure[failure.length - 1];
+    last.params = {
+      ...last.params,
+      end: index === failures.length - 1 ? "." : ";",
+    };
+  });
+  throw new UserError([
+    notice("tiktok.refreshFailed"),
+    ...failures.flat(),
+    notice("tiktok.postsKept"),
+  ]);
 }

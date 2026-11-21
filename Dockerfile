@@ -15,6 +15,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY src/types.ts src/clean-url.ts ./src/
+COPY src/notices ./src/notices
 COPY package.json ./
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node

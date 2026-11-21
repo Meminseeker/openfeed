@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   contentUrl,
   playlistId,
+  importPlaylist,
   playlistPage,
   resolveSharedUrl,
 } from "../server/library.ts";
+import { noticesText } from "../src/notices/index.ts";
 import { expiredPost, retentionDays } from "../server/retention.ts";
 test("content links normalize supported platforms and discard tracking parameters", () => {
   for (const [url, platform, id] of [
@@ -142,6 +144,86 @@ test("individual Instagram and TikTok imports use verified public content, never
       importLink("https://www.tiktok.com/@creator/video/7701241895976013088"),
       /did not expose/,
     );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("library errors carry notices whose English matches the message", async () => {
+  assert.throws(
+    () => contentUrl("http://youtube.com/watch?v=abcdefghijk"),
+    (e: any) =>
+      e.notices?.[0]?.code === "library.httpsLinkRequired" &&
+      e.message ===
+        "Paste an HTTPS link from YouTube, X, Instagram, TikTok or LinkedIn.",
+  );
+  assert.throws(
+    () => playlistId("not a link"),
+    (e: any) =>
+      e.notices?.[0]?.code === "library.invalidUrl" &&
+      e.message === "Invalid URL",
+  );
+  const original = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: "http://127.0.0.1/secrets" },
+    });
+  try {
+    await assert.rejects(
+      resolveSharedUrl("https://vm.tiktok.com/short"),
+      (e: any) =>
+        e.notices?.[0]?.code === "library.invalidTikTokRedirect" &&
+        e.message === "Invalid TikTok redirect.",
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("playlist warnings carry notices whose text equals the English warning", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/watch?v=")) return new Response("gone", { status: 404 });
+    if (url.includes("/youtubei/v1/browse"))
+      return new Response("error", { status: 500 });
+    return new Response(
+      "var ytInitialData = " +
+        JSON.stringify({
+          metadata: { playlistMetadataRenderer: { title: "Example playlist" } },
+          contents: [
+            {
+              playlistVideoRenderer: {
+                videoId: "M4TB50FtID4",
+                title: { simpleText: "Video" },
+              },
+            },
+            {
+              continuationItemRenderer: {
+                continuationEndpoint: {
+                  continuationCommand: { token: "next" },
+                },
+              },
+            },
+          ],
+        }) +
+        ";",
+    );
+  };
+  try {
+    const { playlist } = await importPlaylist(
+      "https://www.youtube.com/playlist?list=PL0gMcF5aNgrPlva_HNnUZgst-oICYDmSW",
+    );
+    assert.equal(
+      playlist.warning,
+      "Some playlist pages could not load. Refresh this playlist to retry. Exact publication dates unavailable for 1 videos; their chronological order may be approximate. Refresh to retry.",
+    );
+    assert.deepEqual(
+      playlist.warningNotices?.map((n) => n.code),
+      ["library.playlistPagesFailed", "library.playlistDatesMissing"],
+    );
+    assert.equal(noticesText(playlist.warningNotices!), playlist.warning);
   } finally {
     globalThis.fetch = original;
   }
