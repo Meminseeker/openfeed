@@ -337,6 +337,10 @@ const socialDataMaxPages = 10;
 // Re-read posts from shortly before the last refresh, in case search indexing lagged.
 const socialDataOverlapMs = 10 * 60 * 1000;
 let socialDataNextSlot = 0;
+// Tests only: forget request spacing left over from an earlier test.
+export function resetSocialDataSpacing() {
+  socialDataNextSlot = 0;
+}
 // When search fails, each account's own timeline is read instead, but at most
 // once per this interval: timeline pages are billed per post, even old ones.
 const socialDataFallbackMs = 6 * 60 * 60 * 1000;

@@ -6,6 +6,7 @@ import {
   syncX,
   syncXSources,
   xSourceKey,
+  resetSocialDataSpacing,
 } from "../server/x.ts";
 import { noticesText, UserError } from "../src/notices/index.ts";
 const tweet = (id: string, extra: any = {}) => ({
@@ -381,6 +382,7 @@ async function withSocialData(
   const calls: { url: URL; init: RequestInit }[] = [];
   process.env.SOCIALDATA_API_KEY = "test-only-key";
   process.env.SOCIALDATA_MIN_INTERVAL_MS = interval;
+  resetSocialDataSpacing();
   globalThis.fetch = (async (input: any, init: RequestInit) => {
     const url = new URL(String(input));
     calls.push({ url, init });
