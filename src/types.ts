@@ -62,6 +62,7 @@ export interface Post {
   id: string;
   creatorId: string;
   title: string;
+  titleOriginal?: boolean;
   text?: string;
   image?: string;
   images?: string[];

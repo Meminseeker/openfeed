@@ -17,7 +17,10 @@ class PageError extends UserError {
   }
 }
 // Redirects are checked before following them; no cookies or credentials are forwarded.
-export async function fetchPublicPage(input: string) {
+export async function fetchPublicPage(
+  input: string,
+  options?: { acceptLanguage?: string | null },
+) {
   const original = new URL(input);
   const youtube = youtubeHosts.includes(original.hostname);
   const platform = youtube
@@ -25,16 +28,21 @@ export async function fetchPublicPage(input: string) {
     : original.hostname.includes("instagram")
       ? "Instagram"
       : "TikTok";
+  const acceptLanguage =
+    options?.acceptLanguage === undefined
+      ? "en-US,en;q=0.9"
+      : options.acceptLanguage;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       let url = original;
       const signal = AbortSignal.timeout(15000);
       for (let hop = 0; hop <= 3; hop++) {
+        const headers: Record<string, string> = {
+          "User-Agent": "Mozilla/5.0",
+        };
+        if (acceptLanguage) headers["Accept-Language"] = acceptLanguage;
         const r = await fetch(url.href, {
-          headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9",
-          },
+          headers,
           signal,
           redirect: "manual",
         });

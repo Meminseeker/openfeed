@@ -637,8 +637,11 @@ function creatorError(c: Creator) {
 function mergeSynced(p: Post, prev: Post | undefined): Post {
   const keepDate =
     !!prev?.published && (p.publishedApproximate || !p.published);
+  const keepTitle = !!prev?.titleOriginal && !p.titleOriginal && !!prev.title;
   return {
     ...p,
+    title: keepTitle ? prev!.title : p.title,
+    titleOriginal: keepTitle ? true : p.titleOriginal,
     published: keepDate ? prev!.published : p.published,
     publishedApproximate: keepDate
       ? prev!.publishedApproximate

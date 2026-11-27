@@ -155,6 +155,7 @@ export async function importLink(
     const data = (await (
       await page(
         `https://www.youtube.com/oembed?url=${encodeURIComponent(link.url)}&format=json`,
+        { acceptLanguage: null },
       )
     ).json()) as any;
     return {
@@ -162,6 +163,7 @@ export async function importLink(
       post: {
         ...base,
         title: data.title || "YouTube video",
+        titleOriginal: !!data.title,
         videoId: link.id,
         kind: link.short ? "short" : "video",
         image: `https://i.ytimg.com/vi/${link.id}/hqdefault.jpg`,
@@ -270,6 +272,49 @@ export function playlistId(input: string) {
     throw userError("library.playlistLinkRequired");
   return id;
 }
+function extractJsonObject(source: string, marker: RegExp): any {
+  const match = marker.exec(source);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  let depth = 0,
+    quoted = false,
+    escape = false;
+  for (let i = start; i < source.length; i++) {
+    const c = source[i];
+    if (quoted) {
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') quoted = false;
+    } else {
+      if (c === '"') quoted = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) {
+        try {
+          return JSON.parse(source.slice(start, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+function continuationToken(renderer: any): string | undefined {
+  const direct = renderer?.continuationEndpoint?.continuationCommand?.token;
+  if (typeof direct === "string" && direct) return direct;
+  const commands =
+    renderer?.continuationEndpoint?.commandExecutorCommand?.commands;
+  if (Array.isArray(commands)) {
+    for (const cmd of commands) {
+      const token = cmd?.continuationCommand?.token;
+      if (typeof token === "string" && token) return token;
+    }
+  }
+  const button =
+    renderer?.button?.buttonRenderer?.command?.continuationCommand?.token;
+  if (typeof button === "string" && button) return button;
+  return undefined;
+}
 export function playlistPage(data: any, creatorId: string) {
   const posts: Post[] = publicPosts(
     data.contents || data,
@@ -298,8 +343,10 @@ export function playlistPage(data: any, creatorId: string) {
         saved: false,
         libraryOnly: true,
       });
-    if (k === "continuationItemRenderer")
-      continuation = v.continuationEndpoint?.continuationCommand?.token;
+    if (k === "continuationItemRenderer") {
+      const token = continuationToken(v);
+      if (token) continuation = token;
+    }
   });
   return { posts, continuation };
 }
@@ -309,41 +356,57 @@ export async function importPlaylist(
 ): Promise<{ playlist: Playlist; posts: Post[] }> {
   const id = playlistId(input),
     url = `https://www.youtube.com/playlist?list=${id}`;
-  const html = await (await page(url)).text();
+  const html = await (await page(url, { acceptLanguage: null })).text();
   const data = initialData(html);
   const title =
     data.metadata?.playlistMetadataRenderer?.title || "YouTube playlist";
   let batch = playlistPage(data, `playlist:${id}`);
   const collected = new Map(batch.posts.map((p) => [p.id, p]));
-  const contextMatch = html.match(
-    /"INNERTUBE_CONTEXT"\s*:\s*(\{[\s\S]*?\}),"[A-Z_]+"/,
-  );
-  let context: any;
-  try {
-    context = JSON.parse(contextMatch?.[1] || "null");
-  } catch {}
+  let context = extractJsonObject(html, /"INNERTUBE_CONTEXT"\s*:\s*/);
+  const clientVersion =
+    context?.client?.clientVersion ||
+    html.match(/"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/)?.[1] ||
+    "2.20261027.01.00";
   context ||= {
     client: {
       clientName: "WEB",
-      clientVersion:
-        html.match(/"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/)?.[1] ||
-        "2.20261027.01.00",
-      hl: "en",
+      clientVersion,
     },
   };
+  const apiKey = html.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/)?.[1];
+  const browseUrl = apiKey
+    ? `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}`
+    : "https://www.youtube.com/youtubei/v1/browse";
   const warningNotices: Notice[] = [];
-  for (let n = 0; batch.continuation && n < 20; n++) {
+  const seenTokens = new Set<string>();
+  for (let n = 0; batch.continuation && n < 50; n++) {
+    if (seenTokens.has(batch.continuation)) {
+      batch.continuation = undefined;
+      break;
+    }
+    seenTokens.add(batch.continuation);
     try {
-      const r = await fetch("https://www.youtube.com/youtubei/v1/browse", {
+      const r = await fetch(browseUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0",
+          Origin: "https://www.youtube.com",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": String(clientVersion),
+        },
         body: JSON.stringify({ context, continuation: batch.continuation }),
         redirect: "error",
         signal: AbortSignal.timeout(20000),
       });
       if (!r.ok) throw new Error();
       batch = playlistPage(await r.json(), `playlist:${id}`);
+      const before = collected.size;
       for (const p of batch.posts) collected.set(p.id, p);
+      if (collected.size === before && !batch.posts.length) {
+        batch.continuation = undefined;
+        break;
+      }
     } catch {
       warningNotices.push(notice("library.playlistPagesFailed"));
       break;

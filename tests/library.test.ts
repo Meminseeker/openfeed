@@ -228,3 +228,115 @@ test("playlist warnings carry notices whose text equals the English warning", as
     globalThis.fetch = original;
   }
 });
+
+test("playlist pagination follows commandExecutorCommand tokens and passes INNERTUBE_API_KEY", async () => {
+  const original = globalThis.fetch;
+  const browseRequests: { url: string; body: any }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/watch?v=")) {
+      const id = new URL(url).searchParams.get("v")!;
+      return new Response(
+        `var ytInitialPlayerResponse = ${JSON.stringify({
+          videoDetails: { videoId: id, title: `Original ${id}` },
+          microformat: {
+            playerMicroformatRenderer: { publishDate: "2026-01-10T10:00:00Z" },
+          },
+        })};`,
+      );
+    }
+    if (url.includes("/youtubei/v1/browse")) {
+      const body = JSON.parse(String(init?.body || "{}"));
+      browseRequests.push({ url, body });
+      if (body.continuation === "tok-page-2") {
+        return Response.json({
+          onResponseReceivedActions: [
+            {
+              appendContinuationItemsAction: {
+                continuationItems: [
+                  {
+                    playlistVideoRenderer: {
+                      videoId: "BBBBBBBBBBB",
+                      title: { simpleText: "Translated B" },
+                    },
+                  },
+                  {
+                    continuationItemRenderer: {
+                      continuationEndpoint: {
+                        commandExecutorCommand: {
+                          commands: [
+                            { continuationCommand: { token: "tok-page-3" } },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+      }
+      return Response.json({
+        onResponseReceivedActions: [
+          {
+            appendContinuationItemsAction: {
+              continuationItems: [
+                {
+                  playlistVideoRenderer: {
+                    videoId: "CCCCCCCCCCC",
+                    title: { simpleText: "Translated C" },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+    return new Response(
+      `<script>ytcfg.set({"INNERTUBE_API_KEY":"TESTKEY123","INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"2.20261101.00.00"}}});</script>` +
+        `var ytInitialData = ${JSON.stringify({
+          metadata: { playlistMetadataRenderer: { title: "Big playlist" } },
+          contents: [
+            {
+              playlistVideoRenderer: {
+                videoId: "AAAAAAAAAAA",
+                title: { simpleText: "Translated A" },
+              },
+            },
+            {
+              continuationItemRenderer: {
+                continuationEndpoint: {
+                  commandExecutorCommand: {
+                    commands: [
+                      { clickTrackingParams: "xyz" },
+                      { continuationCommand: { token: "tok-page-2" } },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        })};`,
+    );
+  };
+  try {
+    const { playlist, posts } = await importPlaylist(
+      "https://www.youtube.com/playlist?list=PL0gMcF5aNgrPlva_HNnUZgst-oICYDmSW",
+    );
+    assert.deepEqual(playlist.postIds, [
+      "AAAAAAAAAAA",
+      "BBBBBBBBBBB",
+      "CCCCCCCCCCC",
+    ]);
+    assert.equal(browseRequests.length, 2);
+    assert.ok(browseRequests[0].url.includes("?key=TESTKEY123"));
+    assert.equal(posts[0].title, "Original AAAAAAAAAAA");
+    assert.equal(posts[1].title, "Original BBBBBBBBBBB");
+    assert.equal(posts[2].title, "Original CCCCCCCCCCC");
+    assert.equal(playlist.warning, undefined);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

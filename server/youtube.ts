@@ -278,6 +278,7 @@ export async function syncChannel(
           id,
           creatorId,
           title: e.title,
+          titleOriginal: true,
           url: `https://www.youtube.com/watch?v=${id}`,
           image: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
           kind: "video",
@@ -313,6 +314,7 @@ export async function syncChannel(
           ...(rss
             ? {
                 title: rss.title,
+                titleOriginal: true,
                 published: rss.published,
                 publishedApproximate: false,
               }

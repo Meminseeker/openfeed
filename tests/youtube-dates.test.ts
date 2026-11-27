@@ -76,3 +76,41 @@ test("unavailable precise dates preserve content and remain retryable", async ()
     globalThis.fetch = original;
   }
 });
+
+test("watch-page resolution replaces auto-translated titles with original videoDetails.title and omits Accept-Language", async () => {
+  const original = globalThis.fetch;
+  const seenHeaders: Record<string, string>[] = [];
+  globalThis.fetch = async (_input, init) => {
+    seenHeaders.push((init?.headers as Record<string, string>) || {});
+    return new Response(
+      `var ytInitialPlayerResponse = ${JSON.stringify({
+        videoDetails: {
+          videoId: "X4pYE34BlYI",
+          title: "Kurtlar Vadisi Pusu 1. Bölüm",
+        },
+        microformat: {
+          playerMicroformatRenderer: { publishDate: "2026-01-17T13:00:56Z" },
+        },
+      })};`,
+    );
+  };
+  try {
+    const p: Post = {
+      id: "X4pYE34BlYI",
+      creatorId: "c1",
+      title: "Valley of the Wolves Ambush Episode 1",
+      url: "https://www.youtube.com/watch?v=X4pYE34BlYI",
+      kind: "video",
+      published: "2026-01-17T00:00:00Z",
+      publishedApproximate: true,
+      read: false,
+      saved: false,
+    };
+    assert.equal(await resolveVideoDates([p]), 0);
+    assert.equal(p.title, "Kurtlar Vadisi Pusu 1. Bölüm");
+    assert.equal(p.titleOriginal, true);
+    assert.equal(seenHeaders[0]["Accept-Language"], undefined);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
