@@ -13,6 +13,21 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="OpenFeed" />
     <title>OpenFeed — Your attention, your choice</title>
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem("openfeed.theme") || "system";
+          var dark =
+            mode === "dark" ||
+            (mode !== "light" &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", dark ? "#1a1f1b" : "#526c40");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

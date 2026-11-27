@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, setActiveAccount, ApiError } from "./api";
 import { useI18n, LanguageSelect } from "./LocaleProvider";
+import { ThemeSelect } from "./ThemeProvider";
 import { unsubscribeCurrentDevice } from "./Notifications";
 export function AuthGate({
   children,
@@ -153,7 +154,10 @@ export function AuthGate({
         >
           {signup ? t("auth.toLogin") : t("auth.toSignup")}
         </button>
-        <LanguageSelect className="auth-language" />
+        <div className="auth-preferences">
+          <LanguageSelect className="auth-language" />
+          <ThemeSelect className="auth-theme" />
+        </div>
       </form>
     </main>
   );

@@ -6,6 +6,10 @@ export const en = {
   "app.title": "OpenFeed — Your attention, your choice",
   "app.opening": "Opening OpenFeed…",
   "language.label": "Language",
+  "theme.label": "Theme",
+  "theme.system": "System",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
 
   // Sidebar
   "sidebar.workspace": "PERSONAL WORKSPACE",
@@ -208,6 +212,8 @@ export const en = {
   "modal.displayNamePlaceholder": "Use their channel name",
   "modal.topics": "Topics",
   "modal.topicsPlaceholder": "Technology, Design, Learning",
+  "modal.existingTopics": "Add an existing topic",
+  "modal.existingTopicsPlaceholder": "Pick an existing topic…",
   "modal.topicsHint":
     "Separate topics with commas. A creator can belong to several.",
   "modal.notifications": "Notify about new content",

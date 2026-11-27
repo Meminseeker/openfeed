@@ -7,6 +7,10 @@ export const tr: Messages = {
   "app.title": "OpenFeed — Dikkatiniz, sizin seçiminiz",
   "app.opening": "OpenFeed açılıyor…",
   "language.label": "Dil",
+  "theme.label": "Tema",
+  "theme.system": "Sistem",
+  "theme.light": "Açık",
+  "theme.dark": "Koyu",
 
   // Sidebar
   "sidebar.workspace": "KİŞİSEL ÇALIŞMA ALANI",
@@ -213,6 +217,8 @@ export const tr: Messages = {
   "modal.displayNamePlaceholder": "Kanal adını kullan",
   "modal.topics": "Konular",
   "modal.topicsPlaceholder": "Teknoloji, Tasarım, Öğrenme",
+  "modal.existingTopics": "Mevcut bir konu ekle",
+  "modal.existingTopicsPlaceholder": "Mevcut bir konu seçin…",
   "modal.topicsHint":
     "Konuları virgülle ayırın. Bir üretici birden fazla konuya ait olabilir.",
   "modal.notifications": "Yeni içerik bildirimleri",

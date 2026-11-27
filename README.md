@@ -37,6 +37,8 @@ See [the deployment guide](docs/deployment.md) for Docker Compose, DigitalOcean 
 - Save posts for later, mark individual posts or the current filtered result as read, and unfollow creators.
 - Persistent local state, explicit refresh, partial-source error reporting, responsive layout, and finite batches of 24 posts. New creators trigger a refresh.
 - Use the interface in English or Turkish. See [Languages](#languages).
+- Choose **Light**, **Dark**, or **System** theme from the sidebar or login screen (saved per browser in `localStorage` under `openfeed.theme`).
+- Pick existing topics from a dropdown when adding or editing a creator to avoid typos, alongside typing new comma-separated topics.
 
 ## YouTube ingestion and limits
 
@@ -191,7 +193,7 @@ Open the HTTPS site, then choose **Install app** in OpenFeed or your browser. On
 
 ### Playlists and Links
 
-**Playlists** imports public or unlisted YouTube playlists, including older videos. Select a playlist to view it in its original order; refresh it to discover changes. Both classic and modern YouTube cards and continuation pages are supported (up to 21 pages per import). Partial imports show a warning. Private, deleted or unplayable items cannot be imported. Removing a playlist preserves items also stored as links, saved for later, noted, or belonging to another playlist.
+**Playlists** imports public or unlisted YouTube playlists, including older videos. Select a playlist to view it in its original order; refresh it to discover changes. Both classic and modern YouTube cards and continuation pages are supported (up to 51 pages / ~5,100 videos per import). Partial imports show a warning. Private, deleted or unplayable items cannot be imported. Removing a playlist preserves items also stored as links, saved for later, noted, or belonging to another playlist.
 
 **Links** imports individual YouTube, X, Instagram, TikTok and LinkedIn content URLs without following their creators. LinkedIn post links (`/posts/…-activity-<id>-…` or `/feed/update/urn:li:activity:<id>`) are read from the public embed page; their date comes from the post ID, which encodes the exact publication time. TikTok short links are resolved only through TikTok-owned hosts. Imported links and playlist items never expire under feed retention, and do not appear in the recent feed unless a followed creator also supplies them. Saved and noted library items remain available in those sidebar sections. Platform access and embedding restrictions still apply; no login walls or private content are bypassed.
 
@@ -220,10 +222,10 @@ Enable **Notifications** in the sidebar to receive one summary push notification
 - **iPhone / iPad:** iOS supports Web Push only for installed Home Screen web apps (Safari → Share → **Add to Home Screen**).
 - **VAPID keys:** OpenFeed generates and persists its own VAPID keys automatically in SQLite (`app_settings`), so no external push service or configuration is required. You may optionally supply `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in `.env`.
 
-YouTube playlist imports resolve precise publication timestamps from each video's
-public watch-page metadata instead of sorting rounded “months ago” estimates.
-Existing playlists are corrected on their next manual or hourly refresh. Exact
-stored dates are reused, and at most three date lookups run concurrently. Creator
-refreshes also resolve missing/approximate video dates for retained content. If
+YouTube playlist imports resolve precise publication timestamps and original (untranslated) video titles from each video's
+public watch-page metadata instead of relying on rounded “months ago” estimates or auto-translated listing titles.
+Existing playlists and channel items are corrected on their next manual or hourly refresh. Exact
+stored dates and original titles are reused, and at most three metadata lookups run concurrently. Creator
+refreshes also resolve missing/approximate video dates and original titles for retained content. If
 YouTube withholds a video's precise date, the playlist shows a warning and retries
 on the next refresh rather than inventing a chronological position.

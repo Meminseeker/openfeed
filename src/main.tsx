@@ -48,6 +48,7 @@ import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
 import { enabledTypes, sourceTypes } from "./types";
 import { api } from "./api";
 import { useI18n, LanguageSelect, I18nProvider } from "./LocaleProvider";
+import { ThemeProvider, ThemeSelect } from "./ThemeProvider";
 import { accountProblem, creatorProblem } from "./i18n";
 import { PhoneSync } from "./PhoneSync";
 import { ContentViewer } from "./ContentViewer";
@@ -301,6 +302,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
         <InstallApp />
         <NotificationToggle />
         <LanguageSelect className="sidebar-language" />
+        <ThemeSelect className="sidebar-theme" />
         <button className="nav" onClick={logout}>
           {t("sidebar.logout", { username })}
         </button>
@@ -832,6 +834,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
       {modal && (
         <CreatorModal
           creator={editing}
+          existingTags={tags}
           close={() => setModal(false)}
           done={async () => {
             setModal(false);
@@ -1053,10 +1056,12 @@ function SyncChoices({
 }
 function CreatorModal({
   creator,
+  existingTags,
   close,
   done,
 }: {
   creator: Creator | null;
+  existingTags: string[];
   close: () => void;
   done: () => Promise<void>;
 }) {
@@ -1239,6 +1244,36 @@ function CreatorModal({
               onChange={(e) => setTags(e.target.value)}
               placeholder={t("modal.topicsPlaceholder")}
             />
+            {(() => {
+              const current = tags
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean);
+              const lower = new Set(current.map((x) => x.toLowerCase()));
+              const available = existingTags.filter(
+                (item) => !lower.has(item.toLowerCase()),
+              );
+              if (!available.length) return null;
+              return (
+                <select
+                  className="existing-topics-select"
+                  aria-label={t("modal.existingTopics")}
+                  value=""
+                  onChange={(e) => {
+                    const chosen = e.target.value;
+                    if (!chosen) return;
+                    setTags([...current, chosen].join(", "));
+                  }}
+                >
+                  <option value="">{t("modal.existingTopicsPlaceholder")}</option>
+                  {available.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
             <small>{t("modal.topicsHint")}</small>
           </label>
           <label className="modal-checkbox">
@@ -1484,8 +1519,10 @@ function CreatorModal({
 }
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
-    <AuthGate>
-      {(username, logout) => <App username={username} logout={logout} />}
-    </AuthGate>
+    <ThemeProvider>
+      <AuthGate>
+        {(username, logout) => <App username={username} logout={logout} />}
+      </AuthGate>
+    </ThemeProvider>
   </I18nProvider>,
 );
