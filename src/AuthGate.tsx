@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, setActiveAccount, ApiError } from "./api";
 import { useI18n, LanguageSelect } from "./LocaleProvider";
+import { unsubscribeCurrentDevice } from "./Notifications";
 export function AuthGate({
   children,
 }: {
@@ -34,7 +35,8 @@ export function AuthGate({
   if (loading) return <div className="empty">{t("app.opening")}</div>;
   if (user)
     return children(user, () => {
-      void api("auth/logout", "POST")
+      void unsubscribeCurrentDevice()
+        .then(() => api("auth/logout", "POST"))
         .then(() => {
           setUser(null);
           setClaim(false);

@@ -30,4 +30,5 @@ export const coreNoticesTr: Record<keyof typeof coreNotices, string> = {
   "core.savePatreonFirst": "Önce bu Patreon hesabını kaydedin.",
   "core.campaignIdInUse":
     "Bu kampanya kimliğini başka bir Patreon hesabı zaten kullanıyor.",
+  "core.invalidPushSubscription": "Geçersiz anlık bildirim aboneliği.",
 };

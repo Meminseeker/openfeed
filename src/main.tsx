@@ -41,6 +41,8 @@ import {
   Menu,
   Trash2,
   Lock,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import type { State, Creator, Post, Kind, Account, SyncType } from "./types";
 import { enabledTypes, sourceTypes } from "./types";
@@ -50,6 +52,7 @@ import { accountProblem, creatorProblem } from "./i18n";
 import { PhoneSync } from "./PhoneSync";
 import { ContentViewer } from "./ContentViewer";
 import { LinkActions } from "./LinkActions";
+import { NotificationToggle } from "./Notifications";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
@@ -66,7 +69,11 @@ function App({ username, logout }: { username: string; logout: () => void }) {
   }, []);
   const [state, setState] = useState<State>({ creators: [], posts: [] }),
     [page, setPage] = useState<PageName>("feed"),
-    [tag, setTag] = useState("All topics"),
+    [tag, setTag] = useState(
+      () =>
+        new URLSearchParams(window.location.search).get("topic") ||
+        "All topics",
+    ),
     [query, setQuery] = useState(""),
     [types, setTypes] = useState<string[]>([]),
     [creatorFilter, setCreatorFilter] = useState<string[] | null>(null),
@@ -292,6 +299,7 @@ function App({ username, logout }: { username: string; logout: () => void }) {
           ))}
         </nav>
         <InstallApp />
+        <NotificationToggle />
         <LanguageSelect className="sidebar-language" />
         <button className="nav" onClick={logout}>
           {t("sidebar.logout", { username })}
@@ -435,36 +443,76 @@ function App({ username, logout }: { username: string; logout: () => void }) {
               </div>
               <div className="creator-grid">
                 {followed.map((c) => (
-                  <button
-                    key={c.id}
-                    className="creator-card"
-                    onClick={() => {
-                      setEditing(c);
-                      setModal(true);
-                    }}
-                  >
-                    <Avatar c={c} />
-                    <h3>{c.name}</h3>
-                    <p>
-                      {t("creators.accounts", { count: c.accounts.length })}
-                    </p>
-                    <div className="tags">
-                      {c.tags.map((t) => (
-                        <span key={t}>{t}</span>
-                      ))}
-                    </div>
-                    <small>
-                      {creatorProblem(locale, c) ||
-                        (c.lastSync
-                          ? t("creators.updated", {
-                              date: new Date(c.lastSync).toLocaleString(locale),
-                            })
-                          : t("creators.ready"))}
-                    </small>
-                    <span className="edit-link">
-                      {t("creators.manage")} <ArrowUpRight size={14} />
-                    </span>
-                  </button>
+                  <article key={c.id} className="creator-card">
+                    <button
+                      type="button"
+                      className={`creator-notify-toggle ${c.notificationsMuted ? "muted" : ""}`}
+                      aria-pressed={!c.notificationsMuted}
+                      aria-label={
+                        c.notificationsMuted
+                          ? t("creators.unmuteNotifications", { name: c.name })
+                          : t("creators.muteNotifications", { name: c.name })
+                      }
+                      title={
+                        c.notificationsMuted
+                          ? t("creators.notificationsMuted")
+                          : t("creators.notificationsOn")
+                      }
+                      onClick={async () => {
+                        try {
+                          const updated = await api(`creators/${c.id}`, "PATCH", {
+                            notificationsMuted: !c.notificationsMuted,
+                          });
+                          setState((s) => ({
+                            ...s,
+                            creators: s.creators.map((x) =>
+                              x.id === c.id ? updated : x,
+                            ),
+                          }));
+                        } catch (e) {
+                          setError(describe(e));
+                        }
+                      }}
+                    >
+                      {c.notificationsMuted ? (
+                        <BellOff size={15} />
+                      ) : (
+                        <Bell size={15} />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="creator-card-body"
+                      onClick={() => {
+                        setEditing(c);
+                        setModal(true);
+                      }}
+                    >
+                      <Avatar c={c} />
+                      <h3>{c.name}</h3>
+                      <p>
+                        {t("creators.accounts", { count: c.accounts.length })}
+                      </p>
+                      <div className="tags">
+                        {c.tags.map((t) => (
+                          <span key={t}>{t}</span>
+                        ))}
+                      </div>
+                      <small>
+                        {creatorProblem(locale, c) ||
+                          (c.lastSync
+                            ? t("creators.updated", {
+                                date: new Date(c.lastSync).toLocaleString(
+                                  locale,
+                                ),
+                              })
+                            : t("creators.ready"))}
+                      </small>
+                      <span className="edit-link">
+                        {t("creators.manage")} <ArrowUpRight size={14} />
+                      </span>
+                    </button>
+                  </article>
                 ))}
               </div>
               {!followed.length && !loading && (
@@ -1022,6 +1070,9 @@ function CreatorModal({
     [channel, setChannel] = useState(""),
     [platform, setPlatform] = useState("youtube"),
     [tags, setTags] = useState(creator?.tags.join(", ") || ""),
+    [notificationsMuted, setNotificationsMuted] = useState(
+      Boolean(creator?.notificationsMuted),
+    ),
     [accounts, setAccounts] = useState<Account[]>(
       creator?.accounts || [
         {
@@ -1072,6 +1123,7 @@ function CreatorModal({
       await api(`creators/${c!.id}`, "PATCH", {
         name: name || c!.name,
         tags: tags.split(","),
+        notificationsMuted,
         accounts: !creator
           ? accounts.map((a) =>
               a.platform === platform
@@ -1188,6 +1240,17 @@ function CreatorModal({
               placeholder={t("modal.topicsPlaceholder")}
             />
             <small>{t("modal.topicsHint")}</small>
+          </label>
+          <label className="modal-checkbox">
+            <input
+              type="checkbox"
+              checked={!notificationsMuted}
+              onChange={(e) => setNotificationsMuted(!e.target.checked)}
+            />
+            <span>
+              {t("modal.notifications")}
+              <small>{t("modal.notificationsHint")}</small>
+            </span>
           </label>
           {creator &&
             !creator.accounts.some((a) => a.platform === "youtube") && (

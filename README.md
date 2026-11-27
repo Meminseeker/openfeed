@@ -211,6 +211,15 @@ running, even with the browser closed. Refreshes are serialized across accounts;
 source failures do not stop other accounts. The first automatic run is one hour
 after server startup. Open apps check for updated state every minute and on focus.
 
+### Push notifications (Desktop & Mobile PWA)
+
+Enable **Notifications** in the sidebar to receive one summary push notification per hourly background refresh on that device when unmuted creators publish new content. Multiple new items are grouped by creator topic and open directly into OpenFeed (or the matching topic) when tapped. Newly followed sources skip notifications on their first backfill sync, and manual refreshes do not trigger push notifications.
+
+- **Per-device toggle:** notifications are enabled or disabled independently on each browser or installed PWA. Logging out unsubscribes that browser automatically.
+- **Per-creator mute:** mute or unmute individual creators from their card on the **Creators** page or inside **Manage creator**.
+- **iPhone / iPad:** iOS supports Web Push only for installed Home Screen web apps (Safari → Share → **Add to Home Screen**).
+- **VAPID keys:** OpenFeed generates and persists its own VAPID keys automatically in SQLite (`app_settings`), so no external push service or configuration is required. You may optionally supply `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in `.env`.
+
 YouTube playlist imports resolve precise publication timestamps from each video's
 public watch-page metadata instead of sorting rounded “months ago” estimates.
 Existing playlists are corrected on their next manual or hourly refresh. Exact

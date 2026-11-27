@@ -42,6 +42,7 @@ export interface Creator {
   avatar: string;
   lastSync?: string;
   error?: string;
+  notificationsMuted?: boolean;
 }
 // Sanitized rich text; rendered as React elements, never as HTML.
 export interface RichSpan {

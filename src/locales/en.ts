@@ -58,6 +58,10 @@ export const en = {
   "creators.updated": "Updated {date}",
   "creators.ready": "Ready to sync",
   "creators.manage": "Manage creator",
+  "creators.notificationsOn": "Notifications on",
+  "creators.notificationsMuted": "Notifications muted",
+  "creators.muteNotifications": "Mute notifications for {name}",
+  "creators.unmuteNotifications": "Enable notifications for {name}",
   "creators.emptyTitle": "Start with someone you love following.",
   "creators.emptyText":
     "Add a YouTube, X, Instagram, TikTok, Patreon or LinkedIn creator, give them a few topics, and make this space your own.",
@@ -206,6 +210,9 @@ export const en = {
   "modal.topicsPlaceholder": "Technology, Design, Learning",
   "modal.topicsHint":
     "Separate topics with commas. A creator can belong to several.",
+  "modal.notifications": "Notify about new content",
+  "modal.notificationsHint":
+    "Include this creator in hourly refresh notifications.",
   "modal.youtubeOptional": "YouTube channel (optional)",
   "modal.youtubePlaceholder": "@handle or a YouTube channel URL",
   "modal.publicContent": "Public content",
@@ -288,6 +295,18 @@ export const en = {
   "install.button": "Install app",
   "install.help":
     "On iPhone or iPad, open in Safari, tap Share, then Add to Home Screen. On Android, choose Install app or Add to Home Screen in your browser menu.",
+
+  // Notifications
+  "notifications.on": "Notifications: On",
+  "notifications.off": "Notifications: Off",
+  "notifications.blocked": "Notifications: Blocked",
+  "notifications.updating": "Updating…",
+  "notifications.iosInstallHelp":
+    "On iPhone or iPad, add OpenFeed to your Home Screen (Share → Add to Home Screen) and open it from there to enable notifications.",
+  "notifications.deniedHelp":
+    "Notifications are blocked for this site. Allow them in your browser or device settings, then try again.",
+  "notifications.permissionNeeded":
+    "Allow notification permission when prompted to receive hourly refresh summaries.",
 
   // Notes
   "notes.saved": "Saved",

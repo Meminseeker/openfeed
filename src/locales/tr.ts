@@ -59,6 +59,10 @@ export const tr: Messages = {
   "creators.updated": "Güncellendi: {date}",
   "creators.ready": "Eşitlemeye hazır",
   "creators.manage": "Üreticiyi yönet",
+  "creators.notificationsOn": "Bildirimler açık",
+  "creators.notificationsMuted": "Bildirimler sessize alındı",
+  "creators.muteNotifications": "{name} için bildirimleri sessize al",
+  "creators.unmuteNotifications": "{name} için bildirimleri aç",
   "creators.emptyTitle": "Takip etmeyi sevdiğiniz biriyle başlayın.",
   "creators.emptyText":
     "Bir YouTube, X, Instagram, TikTok, Patreon veya LinkedIn üreticisi ekleyin, birkaç konu verin ve bu alanı kendinize göre şekillendirin.",
@@ -211,6 +215,9 @@ export const tr: Messages = {
   "modal.topicsPlaceholder": "Teknoloji, Tasarım, Öğrenme",
   "modal.topicsHint":
     "Konuları virgülle ayırın. Bir üretici birden fazla konuya ait olabilir.",
+  "modal.notifications": "Yeni içerik bildirimleri",
+  "modal.notificationsHint":
+    "Bu üreticiyi saatlik yenileme bildirimlerine dahil et.",
   "modal.youtubeOptional": "YouTube kanalı (isteğe bağlı)",
   "modal.youtubePlaceholder": "@kullanıcıadı veya bir YouTube kanal URL'si",
   "modal.publicContent": "Herkese açık içerik",
@@ -294,6 +301,18 @@ export const tr: Messages = {
   "install.button": "Uygulamayı yükle",
   "install.help":
     "iPhone veya iPad'de Safari ile açın, Paylaş'a ve ardından Ana Ekrana Ekle'ye dokunun. Android'de tarayıcı menüsünden Uygulamayı yükle veya Ana ekrana ekle'yi seçin.",
+
+  // Notifications
+  "notifications.on": "Bildirimler: Açık",
+  "notifications.off": "Bildirimler: Kapalı",
+  "notifications.blocked": "Bildirimler: Engellendi",
+  "notifications.updating": "Güncelleniyor…",
+  "notifications.iosInstallHelp":
+    "iPhone veya iPad'de bildirimleri açmak için OpenFeed'i Ana Ekrana ekleyin (Paylaş → Ana Ekrana Ekle) ve uygulamayı oradan açın.",
+  "notifications.deniedHelp":
+    "Bu site için bildirimler engellenmiş. Tarayıcı veya cihaz ayarlarınızdan izin verip tekrar deneyin.",
+  "notifications.permissionNeeded":
+    "Saatlik yenileme özetlerini almak için istendiğinde bildirim izni verin.",
 
   // Notes
   "notes.saved": "Kaydedildi",

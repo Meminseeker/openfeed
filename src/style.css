@@ -743,14 +743,37 @@ h1 {
   gap: 20px;
 }
 .creator-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 28px 20px;
   border: 1px solid #e0e4d6;
   border-radius: 10px;
   background: #fcfcf7;
+}
+.creator-card-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  width: 100%;
+  padding: 28px 20px;
   text-align: center;
+}
+.creator-notify-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: #526c40;
+  background: #edf2e5;
+}
+.creator-notify-toggle.muted {
+  color: #9ba48f;
+  background: #f1f2ea;
 }
 .creator-card .creator-avatar {
   width: 60px;
@@ -2374,6 +2397,32 @@ kbd {
 }
 .sidebar-language {
   margin: 0 12px 12px;
+}
+.notifications-control {
+  margin-bottom: 6px;
+}
+.notifications-help {
+  margin: 4px 12px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #697165;
+}
+.modal label.modal-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  cursor: pointer;
+}
+.modal label.modal-checkbox input {
+  width: auto;
+  margin: 2px 0 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.modal label.modal-checkbox span {
+  display: grid;
+  gap: 3px;
 }
 .auth-card .language-select {
   display: flex;

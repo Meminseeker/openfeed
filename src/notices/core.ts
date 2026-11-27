@@ -30,4 +30,5 @@ export const coreNotices = {
   "core.savePatreonFirst": "Save this Patreon account first.",
   "core.campaignIdInUse":
     "Another Patreon account already uses this campaign ID.",
+  "core.invalidPushSubscription": "Invalid push notification subscription.",
 } as const;

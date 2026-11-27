@@ -1,5 +1,17 @@
 import { resolveVideoDates } from "./youtube-dates.ts";
 import { hourlyRefresh } from "./refresh.ts";
+import {
+  hasPushSubscription,
+  initializePushTables,
+  loadOrCreateVapidKeys,
+  removePushSubscription,
+  savePushSubscription,
+  sendUserNotification,
+} from "./push.ts";
+import {
+  buildRefreshNotification,
+  type NewPostItem,
+} from "./notifications.ts";
 import { importLink, importPlaylist } from "./library.ts";
 import { initializeAccounts, installAuth, owner, asOwner } from "./auth.ts";
 import { syncTikTok, tiktokUsername } from "./tiktok.ts";
@@ -104,6 +116,7 @@ db.exec(
   `PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS creators (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, data TEXT NOT NULL);`,
 );
 initializeAccounts(db);
+initializePushTables(db);
 const creators = (): Creator[] =>
   db
     .prepare("SELECT data FROM creators WHERE user_id=?")
@@ -147,6 +160,7 @@ cleanupTimer.unref();
 const app = express();
 app.disable("x-powered-by");
 const publicOrigin = validatePublicOrigin(process.env.OPENFEED_PUBLIC_ORIGIN);
+const vapidKeys = loadOrCreateVapidKeys(db, publicOrigin);
 // Production is reachable only through the single Caddy proxy (no published app port).
 if (publicOrigin) app.set("trust proxy", 1);
 app.use((req, res, next) => {
@@ -448,6 +462,8 @@ app.patch("/api/creators/:id", async (req, res) => {
   }
   if (typeof req.body.name === "string" && req.body.name.trim())
     c.name = req.body.name.trim().slice(0, 100);
+  if (typeof req.body.notificationsMuted === "boolean")
+    c.notificationsMuted = req.body.notificationsMuted;
   if (Array.isArray(req.body.tags))
     c.tags = [
       ...new Set<string>(
@@ -738,9 +754,10 @@ function patreonSessionAllowed() {
   return row?.username === allowed;
 }
 const syncing = new Set<string>();
-async function syncContents() {
-  if (syncing.has(owner())) return;
+async function syncContents(): Promise<NewPostItem[]> {
+  if (syncing.has(owner())) return [];
   syncing.add(owner());
+  const added: NewPostItem[] = [];
   try {
     // With SocialData, all X accounts are fetched up front in shared OR searches.
     const xResults = socialDataEnabled()
@@ -858,6 +875,7 @@ async function syncContents() {
           const current = creators().find((x) => x.id === c.id);
           const source = current?.accounts.find(sameSource);
           if (!current || !source || !enabledTypes(source).length) continue;
+          const hadPreviousSync = !!source.lastSync;
           const old = new Map(posts().map((p) => [p.id, p]));
           for (const p of result.posts) {
             if (
@@ -866,8 +884,14 @@ async function syncContents() {
               )
             )
               continue;
-            const updated = mergeSynced(p, old.get(p.id));
-            if (!expiredPost(updated, retention)) savePost(updated);
+            const prev = old.get(p.id);
+            const updated = mergeSynced(p, prev);
+            if (!expiredPost(updated, retention)) {
+              savePost(updated);
+              if (!prev && hadPreviousSync && !current.notificationsMuted) {
+                added.push({ post: updated, creator: current });
+              }
+            }
           }
           if ("newestId" in result && typeof result.newestId === "string")
             source.xSinceId = result.newestId;
@@ -904,10 +928,42 @@ async function syncContents() {
       }
     }
     prunePosts(owner());
+    return added;
   } finally {
     syncing.delete(owner());
   }
 }
+app.get("/api/push/vapid-key", (_, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+app.get("/api/push/status", (req, res) => {
+  const endpoint = String(req.query.endpoint || "");
+  res.json({
+    subscribed: !!endpoint && hasPushSubscription(db, owner(), endpoint),
+  });
+});
+app.post("/api/push/subscribe", (req, res) => {
+  const endpoint =
+    typeof req.body?.endpoint === "string" ? req.body.endpoint : "";
+  const p256dh =
+    typeof req.body?.keys?.p256dh === "string" ? req.body.keys.p256dh : "";
+  const auth =
+    typeof req.body?.keys?.auth === "string" ? req.body.keys.auth : "";
+  const locale = typeof req.body?.locale === "string" ? req.body.locale : "en";
+  try {
+    savePushSubscription(db, owner(), { endpoint, p256dh, auth, locale });
+  } catch {
+    res.status(400).json(noticeBody("core.invalidPushSubscription"));
+    return;
+  }
+  res.json({ ok: true });
+});
+app.delete("/api/push/subscribe", (req, res) => {
+  const endpoint =
+    typeof req.body?.endpoint === "string" ? req.body.endpoint : "";
+  if (endpoint) removePushSubscription(db, owner(), endpoint);
+  res.json({ ok: true });
+});
 app.post("/api/sync", async (_, res) => {
   if (syncing.has(owner())) {
     res.status(409).json(noticeBody("core.refreshInProgress"));
@@ -925,7 +981,16 @@ const refreshTimer = setInterval(
         .map((user) => String(user.id)),
     (id) =>
       asOwner(id, async () => {
-        await syncContents();
+        const added = await syncContents();
+        if (added.length) {
+          try {
+            await sendUserNotification(db, id, vapidKeys, (locale) =>
+              buildRefreshNotification(added, locale),
+            );
+          } catch (error) {
+            console.error("Automatic notification delivery failed", error);
+          }
+        }
         for (const playlist of state().playlists) {
           try {
             await refreshPlaylist(playlist.url, true);
